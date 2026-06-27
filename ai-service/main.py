@@ -728,6 +728,21 @@ except Exception:  # noqa: BLE001
     pass
 
 
+# --- Live news-sentiment signal (real headlines) ------------------------------
+# Distinct from /sentiment (which scores arbitrary text): this pulls REAL
+# recent headlines for a symbol and returns a recency-weighted aggregate.
+# It is a context signal, NOT a backtested edge — see news_sentiment.py.
+try:
+    from news_sentiment import analyze_symbol as _news_analyze  # type: ignore[import-not-found]
+
+    @app.get("/news-sentiment/{symbol}")
+    def news_sentiment_endpoint(symbol: str, aliases: str = "") -> dict:
+        alias_list = [a.strip() for a in aliases.split(",") if a.strip()]
+        return _news_analyze(symbol, aliases=alias_list or None)
+except Exception:  # noqa: BLE001
+    pass
+
+
 # ─── Master Confluence Scan (Phase 7 — runs every detector) ────────────────
 # POST /api/patterns/scan-all
 # Accepts {symbol, candles, weekly_candles?} and returns:
