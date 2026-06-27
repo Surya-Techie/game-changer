@@ -36,6 +36,12 @@ export interface PpsSignal {
   target_price: number | null;
   risk_reward: number | null;
   trend_aligned: boolean;
+  // Analytics → PPS enrichment. measured_win_rate is the pattern's measured
+  // historical win rate (0..1) when it has resolved samples, else null.
+  // combined_confidence blends the engine confidence toward it by sample size.
+  measured_win_rate?: number | null;
+  measured_samples?: number;
+  combined_confidence?: number;
 }
 
 export interface PpsSignalsResponse {

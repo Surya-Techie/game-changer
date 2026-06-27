@@ -79,6 +79,7 @@ export default function PpsSignalTable({ signals, bars }: Props) {
               <th className="px-3 py-2 text-right font-medium">Target</th>
               <th className="px-3 py-2 text-right font-medium">R:R</th>
               <th className="px-3 py-2 text-right font-medium">Conf</th>
+              <th className="px-3 py-2 text-right font-medium" title="Measured historical win rate for this pattern from Pattern Analytics (sample size). '—' until enough resolved trades accumulate.">Measured</th>
               <th className="px-3 py-2 text-right font-medium">Result</th>
             </tr>
           </thead>
@@ -105,7 +106,26 @@ export default function PpsSignalTable({ signals, bars }: Props) {
                   <td className="px-3 py-2 text-right font-mono text-accent-sell">{s.stop_loss?.toFixed(2) ?? "—"}</td>
                   <td className="px-3 py-2 text-right font-mono text-accent-buy">{s.target_price?.toFixed(2) ?? "—"}</td>
                   <td className="px-3 py-2 text-right font-mono text-slate-300">{s.risk_reward?.toFixed(2) ?? "—"}</td>
-                  <td className="px-3 py-2 text-right font-mono text-slate-300">{(s.confidence * 100).toFixed(0)}%</td>
+                  <td
+                    className="px-3 py-2 text-right font-mono text-slate-300"
+                    title={
+                      s.combined_confidence != null && s.measured_win_rate != null
+                        ? `Blended with measured: ${(s.combined_confidence * 100).toFixed(0)}%`
+                        : "Engine confidence (no measured data yet)"
+                    }
+                  >
+                    {(s.confidence * 100).toFixed(0)}%
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono">
+                    {s.measured_win_rate != null ? (
+                      <span className={s.measured_win_rate >= 0.5 ? "text-accent-buy" : "text-accent-sell"}>
+                        {(s.measured_win_rate * 100).toFixed(0)}%
+                        <span className="text-slate-500"> ({s.measured_samples ?? 0})</span>
+                      </span>
+                    ) : (
+                      <span className="text-slate-600">—</span>
+                    )}
+                  </td>
                   <td className={clsx("px-3 py-2 text-right whitespace-nowrap", o.cls)}>{o.label}</td>
                 </tr>
               );

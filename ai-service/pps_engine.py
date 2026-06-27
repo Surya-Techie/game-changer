@@ -16,7 +16,7 @@ pull in the `ta` package — those have been audited and tested.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Literal, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 
 from indicators import atr as _atr_series, sma as _sma_series
 
@@ -35,6 +35,25 @@ PatternId = Literal[
     "double_bottom",
     "double_top",
 ]
+
+# Canonical display names so PPS pattern ids line up with the
+# pattern-accuracy store (analytics → PPS enrichment). Once a pattern has
+# enough resolved samples in the store, its MEASURED win rate flows onto
+# live PPS signals via enrich_signals_with_accuracy().
+PPS_PATTERN_NAMES: Dict[str, str] = {
+    "symmetrical_triangle": "Symmetrical Triangle",
+    "ascending_triangle": "Ascending Triangle",
+    "descending_triangle": "Descending Triangle",
+    "head_shoulders_continuation": "Head and Shoulders",
+    "double_bottom": "Double Bottom",
+    "double_top": "Double Top",
+}
+
+# Empirical-Bayes shrinkage constant: at this many measured samples the
+# blended confidence weights the measured win rate and the PPS engine's
+# own confidence equally. Fewer samples → trust the engine; more → trust
+# the measured rate. Keeps a 3-trade fluke from hijacking the signal.
+_ACCURACY_BLEND_K = 20
 
 
 @dataclass
@@ -582,3 +601,50 @@ def summarise(signals: List[dict]) -> dict:
         "sell_count": sell,
         "avg_confidence": round(avg, 3),
     }
+
+
+def enrich_signals_with_accuracy(
+    signals: List[dict],
+    accuracy_by_name: Dict[str, dict],
+) -> List[dict]:
+    """Fold MEASURED pattern win rates (from pattern-analytics) onto live PPS
+    signals — the Analytics → PPS integration.
+
+    accuracy_by_name maps a canonical pattern name to
+    ``{"win_rate": float in [0,1], "samples": int}`` (e.g. built from the
+    pattern_accuracy rollups). For each BUY/SELL signal whose pattern has
+    measured data, we attach:
+      - measured_win_rate   : the empirical win rate for that pattern
+      - measured_samples    : how many resolved trades back it
+      - combined_confidence : PPS confidence shrunk toward the measured rate
+                              by sample count (empirical-Bayes), so the live
+                              signal reflects what actually happened, not just
+                              the engine's prior.
+
+    Degrades gracefully: with no measured data, combined_confidence simply
+    equals the engine's own confidence and measured_win_rate is None.
+    """
+    for s in signals:
+        conf = s.get("confidence")
+        s["measured_win_rate"] = None
+        s["measured_samples"] = 0
+        s["combined_confidence"] = conf
+        if s.get("signal") not in ("BUY", "SELL"):
+            continue
+        name = PPS_PATTERN_NAMES.get(s.get("pattern") or "")
+        rec = accuracy_by_name.get(name) if name else None
+        if not rec:
+            continue
+        try:
+            wr = float(rec["win_rate"])
+            n = int(rec["samples"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if n <= 0:
+            continue
+        w = n / (n + _ACCURACY_BLEND_K)            # 0..1, grows with samples
+        pps_conf = float(conf or 0.0)
+        s["measured_win_rate"] = round(wr, 4)
+        s["measured_samples"] = n
+        s["combined_confidence"] = round((1.0 - w) * pps_conf + w * wr, 3)
+    return signals

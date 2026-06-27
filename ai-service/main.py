@@ -660,7 +660,34 @@ except Exception:  # noqa: BLE001
 
 # --- PPS (Pattern Probability Strategy) signal engine -----------------------
 try:
-    from pps_engine import generate_pps_signals, summarise as _pps_summarise  # type: ignore[import-not-found]
+    from pps_engine import (  # type: ignore[import-not-found]
+        generate_pps_signals,
+        summarise as _pps_summarise,
+        enrich_signals_with_accuracy as _pps_enrich,
+    )
+
+    def _pps_accuracy_lookup() -> dict:
+        """Build {canonical_pattern_name: {win_rate, samples}} from the
+        pattern-accuracy rollups, aggregated across timeframes. Empty when
+        Mongo is unavailable — the enrichment then no-ops gracefully."""
+        try:
+            from patterns.mongo_store import accuracy_summary, mongo_available  # type: ignore
+            if not mongo_available():
+                return {}
+            agg: dict = {}
+            for r in accuracy_summary():
+                name = r.get("pattern_name")
+                if not name:
+                    continue
+                a = agg.setdefault(name, {"wins": 0, "total": 0})
+                a["wins"] += int(r.get("wins") or 0)
+                a["total"] += int(r.get("total_detected") or 0)
+            return {
+                name: {"win_rate": v["wins"] / v["total"], "samples": v["total"]}
+                for name, v in agg.items() if v["total"] > 0
+            }
+        except Exception:  # noqa: BLE001
+            return {}
 
     class PpsBar(BaseModel):
         date: str
@@ -679,6 +706,8 @@ try:
     def pps_signals_endpoint(req: PpsRequest) -> dict:
         bars_in = [b.model_dump() for b in req.bars]
         signals = generate_pps_signals(bars_in)
+        # Analytics → PPS: fold measured pattern win rates onto the signals.
+        signals = _pps_enrich(signals, _pps_accuracy_lookup())
         return {
             "symbol": req.symbol,
             "timeframe": req.timeframe,
