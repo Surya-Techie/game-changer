@@ -74,15 +74,19 @@ FEATURE_NAMES = [
 ]
 N_FEATURES = len(FEATURE_NAMES)
 
-# Measured negative result (kept as a guardrail for the next person):
-# microstructure proxies — close-in-range position, inter-bar gap, and
-# volume-z signed by return — were added and OOS-evaluated on 5m/2-bar
-# data across 12 NSE large-caps. They did NOT improve direction accuracy
-# (52.9% -> 52.6%) or Brier, so they were removed. Price/volume features
-# alone sit at ~50-53% directional accuracy at every timeframe tested;
-# real edge needs richer data (cross-sectional, news, order book), not
-# more derived price features. Re-measure with _eval_models.py before
-# re-adding anything here.
+# Measured negative results (kept as guardrails for the next person — each
+# was added, OOS-evaluated across 12 NSE large-caps via _eval_models.py,
+# and removed because it did NOT help):
+#   1. Microstructure proxies (close-in-range, inter-bar gap, signed
+#      volume) on 5m/2-bar: direction accuracy 52.9% -> 52.6%, no gain.
+#   2. Cross-sectional / relative-strength vs NIFTY (rel returns, rolling
+#      beta, index return) on 5y daily: 50.4% -> 49.0%, OOS R2 -0.28 ->
+#      -0.44 — actively worse (extra dimensions = noise here).
+# Takeaway: price-DERIVED features (trend, microstructure, cross-sectional)
+# all sit at ~50-53% directional accuracy on liquid NSE large-caps — the
+# efficient-market ceiling. Genuine new edge needs fundamentally different
+# DATA (news/event sentiment, order-book flow, alternative data), not more
+# transformations of OHLCV. Re-measure with _eval_models.py before adding.
 
 
 def _recency_weights(n: int, half_life: float = 250.0) -> np.ndarray:
