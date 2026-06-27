@@ -714,6 +714,49 @@ try:
             "signals": signals,
             "summary": _pps_summarise(signals),
         }
+
+    @app.post("/pps-signals/record")
+    def pps_record_endpoint(req: PpsRequest) -> dict:
+        """PPS → Analytics: resolve each historical PPS signal's outcome and
+        commit it to the pattern-accuracy store, so PPS patterns show up on
+        the Analytics page (and feed the Analytics → PPS read-back).
+
+        APPEND-ONLY / NOT idempotent: every call re-resolves and re-records
+        the supplied window. Intended for deliberate batch/backfill use
+        (scheduled job or admin action), NOT for per-refresh calls — that
+        would inflate the counts.
+        """
+        from pps_engine import resolve_pps_outcomes, normalise_timeframe  # type: ignore
+        bars_in = [b.model_dump() for b in req.bars]
+        signals = generate_pps_signals(bars_in)
+        resolved = resolve_pps_outcomes(signals, bars_in)
+        tf = normalise_timeframe(req.timeframe)
+        try:
+            from patterns.mongo_store import update_accuracy, mongo_available  # type: ignore
+            if not mongo_available():
+                return {"recorded": 0, "resolvable": len(resolved),
+                        "reason": "mongo unavailable", "timeframe": tf}
+        except Exception:  # noqa: BLE001
+            return {"recorded": 0, "resolvable": len(resolved), "reason": "store unavailable"}
+
+        recorded = wins = losses = 0
+        by_pattern: dict = {}
+        for r in resolved:
+            try:
+                update_accuracy(r["pattern_name"], tf, r["outcome"], r["rr_achieved"], r["hold_bars"])
+            except Exception:  # noqa: BLE001
+                continue
+            recorded += 1
+            wins += 1 if r["outcome"] == "win" else 0
+            losses += 1 if r["outcome"] == "loss" else 0
+            p = by_pattern.setdefault(r["pattern_name"], {"recorded": 0, "wins": 0})
+            p["recorded"] += 1
+            p["wins"] += 1 if r["outcome"] == "win" else 0
+        return {
+            "symbol": req.symbol, "timeframe": tf,
+            "recorded": recorded, "wins": wins, "losses": losses,
+            "by_pattern": by_pattern,
+        }
 except Exception:  # noqa: BLE001 — pps_engine import is mandatory at runtime; this only protects boot under broken edits
     pass
 

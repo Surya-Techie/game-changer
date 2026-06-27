@@ -12,6 +12,7 @@ import {
 } from "lightweight-charts";
 import {
   fetchPpsSignals,
+  recordPpsOutcomes,
   PATTERN_SHORT,
   type PpsBar,
   type PpsSignal,
@@ -70,6 +71,24 @@ export default function PpsSignalsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<{ total_signals: number; buy_count: number; sell_count: number; avg_confidence: number } | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [recordMsg, setRecordMsg] = useState<string | null>(null);
+
+  // PPS → Analytics: resolve this window's outcomes and commit them to the
+  // pattern-accuracy store so PPS patterns gain measured win rates.
+  async function handleRecord() {
+    setRecording(true);
+    setRecordMsg(null);
+    const res = await recordPpsOutcomes({ symbol, timeframe, bars });
+    setRecording(false);
+    if (!res) {
+      setRecordMsg("Failed — AI service unreachable.");
+    } else if (res.reason) {
+      setRecordMsg(res.reason);
+    } else {
+      setRecordMsg(`Recorded ${res.recorded} outcomes (${res.wins ?? 0}W / ${res.losses ?? 0}L) to Analytics.`);
+    }
+  }
 
   // Chart refs.
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -241,8 +260,22 @@ export default function PpsSignalsPage() {
               </button>
             ))}
           </div>
+          {/* PPS → Analytics: commit this window's resolved outcomes. */}
+          <button
+            onClick={handleRecord}
+            disabled={recording || bars.length < 50}
+            title="Resolve these signals' outcomes and record them to Pattern Analytics (append-only)."
+            className="px-3 py-1.5 text-xs rounded border border-bg-border text-slate-200 hover:bg-bg-border/50 disabled:opacity-50"
+          >
+            {recording ? "Recording…" : "Record to Analytics"}
+          </button>
         </div>
       </div>
+      {recordMsg && (
+        <div className="mb-3 text-xs text-slate-400 border border-bg-border rounded px-3 py-1.5 bg-bg-panel/50">
+          {recordMsg}
+        </div>
+      )}
 
       {/* Filters */}
       <PpsSignalFilters value={filters} onChange={setFilters} />
