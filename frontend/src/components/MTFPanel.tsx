@@ -21,7 +21,7 @@ interface MtfResponse {
   alignment: { score: number; outOf: number; direction: "BULL" | "BEAR" | "NEUTRAL" };
 }
 
-const TF_ORDER = ["1m", "5m", "15m", "1h", "1D"];
+const TF_ORDER = ["1m", "5m", "15m", "30m", "1h", "1D"];
 
 export default function MTFPanel({ symbol }: { symbol: string }) {
   const [data, setData] = useState<MtfResponse | null>(null);

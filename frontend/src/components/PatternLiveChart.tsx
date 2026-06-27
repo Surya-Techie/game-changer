@@ -44,9 +44,10 @@ interface TfDef {
 }
 
 const TIMEFRAMES: TfDef[] = [
-  { id: "M1",  label: "1m",  detectTf: "M5"  },
+  { id: "M1",  label: "1m",  detectTf: "M1"  },
   { id: "M5",  label: "5m",  detectTf: "M5"  },
   { id: "M15", label: "15m", detectTf: "M15" },
+  { id: "M30", label: "30m", detectTf: "M30" },
   { id: "H1",  label: "1h",  detectTf: "H1"  },
   { id: "D1",  label: "1d",  detectTf: "D1"  },
   { id: "Y1",  label: "1y",  detectTf: "D1"  },
@@ -59,6 +60,7 @@ const TF_POLL_MS: Record<PatternChartTimeframe, number> = {
   M1:    5_000,
   M5:   10_000,
   M15:  20_000,
+  M30:  30_000,
   H1:   60_000,
   D1:  120_000,
   Y1:  300_000,
@@ -302,7 +304,7 @@ export default function PatternLiveChart({ symbol, onSymbolChange }: Props) {
       try {
         chartRef.current?.applyOptions({
           timeScale: {
-            timeVisible: tf === "M1" || tf === "M5" || tf === "M15" || tf === "H1",
+            timeVisible: tf === "M1" || tf === "M5" || tf === "M15" || tf === "M30" || tf === "H1",
             secondsVisible: tf === "M1",
             borderColor: "#1f2a3d",
           },
@@ -323,6 +325,7 @@ export default function PatternLiveChart({ symbol, onSymbolChange }: Props) {
           tf === "M1" ? 90  :
           tf === "M5" ? 80  :
           tf === "M15" ? 70 :
+          tf === "M30" ? 65 :
           tf === "H1" ? 60  :
           tf === "D1" ? 80  :
                         60; // Y1

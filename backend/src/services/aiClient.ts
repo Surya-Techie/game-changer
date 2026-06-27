@@ -355,7 +355,7 @@ export async function getCandlestickPatterns(symbol: string, candles: Candle[], 
 // service owns the orchestration logic.
 // ────────────────────────────────────────────────────────────────────────
 
-export type PatternTimeframe = "M5" | "M15" | "H1" | "D1";
+export type PatternTimeframe = "M1" | "M5" | "M15" | "M30" | "H1" | "D1";
 
 export interface PatternDetectionResult {
   pattern_name: string;
@@ -446,7 +446,7 @@ export async function fetchPatternAccuracy(): Promise<PatternAccuracyResponse | 
   }
 }
 
-export type PatternChartTimeframe = "M1" | "M5" | "M15" | "H1" | "D1" | "Y1";
+export type PatternChartTimeframe = "M1" | "M5" | "M15" | "M30" | "H1" | "D1" | "Y1";
 
 export interface PatternOhlcvResponse {
   symbol: string;

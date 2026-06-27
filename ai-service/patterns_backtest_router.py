@@ -29,7 +29,7 @@ router = APIRouter(tags=["patterns-backtest"])
 
 # ─── Pydantic ──────────────────────────────────────────────────────────────
 
-Timeframe = Literal["M5", "M15", "H1", "D1"]
+Timeframe = Literal["M1", "M5", "M15", "M30", "H1", "D1"]
 
 
 class BacktestPatternsRequest(BaseModel):
@@ -54,7 +54,7 @@ class PatternNamesResponse(BaseModel):
 
 # ─── yfinance helper ───────────────────────────────────────────────────────
 
-_TF_INTERVAL = {"D1": "1d", "H1": "1h", "M15": "15m", "M5": "5m"}
+_TF_INTERVAL = {"D1": "1d", "H1": "1h", "M30": "30m", "M15": "15m", "M5": "5m", "M1": "1m"}
 
 
 def _fetch_ohlcv_range(symbol: str, timeframe: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
@@ -110,8 +110,9 @@ def backtest_patterns(req: BacktestPatternsRequest) -> dict:
     if df is None or len(df) < 60:
         raise HTTPException(status_code=404, detail=f"insufficient OHLCV for {req.symbol} {req.timeframe} between {req.start_date}/{req.end_date}")
 
-    # Periods/year for Sharpe — daily=252, M5≈252*75, etc.
-    ppy_map = {"D1": 252, "H1": 252 * 7, "M15": 252 * 25, "M5": 252 * 75}
+    # Periods/year for Sharpe — daily=252; NSE has ~375 1-min bars/day, so
+    # M1≈252*375, M5≈252*75, M15≈252*25, M30≈252*12, H1≈252*7.
+    ppy_map = {"D1": 252, "H1": 252 * 7, "M30": 252 * 12, "M15": 252 * 25, "M5": 252 * 75, "M1": 252 * 375}
 
     bt_req = PatternBacktestRequest(
         symbol=req.symbol.upper(),

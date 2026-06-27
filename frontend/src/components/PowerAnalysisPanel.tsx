@@ -45,8 +45,10 @@ interface Props {
 }
 
 const TIMEFRAMES: Array<{ id: PatternChartTimeframe; label: string }> = [
+  { id: "M1", label: "1m" },
   { id: "M5", label: "5m" },
   { id: "M15", label: "15m" },
+  { id: "M30", label: "30m" },
   { id: "H1", label: "1h" },
   { id: "D1", label: "1d" },
 ];

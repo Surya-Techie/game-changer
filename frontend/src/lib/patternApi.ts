@@ -63,12 +63,12 @@ export async function fetchLatestPatterns(symbol: string, limit = 50): Promise<L
   }
 }
 
-export type PatternTimeframe = "M5" | "M15" | "H1" | "D1";
+export type PatternTimeframe = "M1" | "M5" | "M15" | "M30" | "H1" | "D1";
 
 // The chart picker exposes a wider set than the detector understands; the
-// chart-only timeframes (M1, Y1) are accepted by /api/patterns/ohlcv but
-// pattern detection only runs on the four core TFs above.
-export type PatternChartTimeframe = "M1" | "M5" | "M15" | "H1" | "D1" | "Y1";
+// chart-only timeframe Y1 is accepted by /api/patterns/ohlcv but pattern
+// detection only runs on the core TFs above.
+export type PatternChartTimeframe = "M1" | "M5" | "M15" | "M30" | "H1" | "D1" | "Y1";
 
 export interface PatternOhlcvResponse {
   symbol: string;

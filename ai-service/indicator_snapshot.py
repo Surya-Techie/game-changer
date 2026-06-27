@@ -34,10 +34,14 @@ _SNAP_TTL = 30.0
 
 def _yf_interval(tf: str) -> Tuple[str, str]:
     """Returns (period, interval) suitable for yfinance.history()."""
+    if tf == "M1":
+        return ("5d", "1m")
     if tf == "M5":
         return ("5d", "5m")
     if tf == "M15":
         return ("10d", "15m")
+    if tf == "M30":
+        return ("20d", "30m")
     if tf == "H1":
         return ("60d", "60m")
     return ("1y", "1d")  # D1 default
@@ -129,7 +133,7 @@ router = APIRouter()
 
 
 @router.get("/indicators/snapshot/{symbol}")
-def get_snapshot(symbol: str, timeframe: str = Query(default="M15", pattern="^(M5|M15|H1|D1)$")):
+def get_snapshot(symbol: str, timeframe: str = Query(default="M15", pattern="^(M1|M5|M15|M30|H1|D1)$")):
     return {
         "symbol": symbol.upper(),
         "timeframe": timeframe,

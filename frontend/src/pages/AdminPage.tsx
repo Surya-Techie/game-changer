@@ -379,7 +379,7 @@ interface PatternStatusResponse {
   ai_service_token_enabled: boolean;
 }
 
-const TIMEFRAMES: PatternTimeframe[] = ["M5", "M15", "H1", "D1"];
+const TIMEFRAMES: PatternTimeframe[] = ["M1", "M5", "M15", "M30", "H1", "D1"];
 
 function PatternsAdminTab() {
   const token = useAuth((s) => s.token);

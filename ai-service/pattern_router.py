@@ -62,8 +62,8 @@ router = APIRouter(prefix="/patterns", tags=["patterns"])
 # without overwhelming yfinance's informal rate limit.
 _EXECUTOR = ThreadPoolExecutor(max_workers=6, thread_name_prefix="qti-pattern-fetch")
 
-_VALID_TIMEFRAMES = ("M5", "M15", "H1", "D1")
-TimeframeLit = Literal["M5", "M15", "H1", "D1"]
+_VALID_TIMEFRAMES = ("M1", "M5", "M15", "M30", "H1", "D1")
+TimeframeLit = Literal["M1", "M5", "M15", "M30", "H1", "D1"]
 
 
 # ─── yfinance helper (cached briefly to avoid back-to-back hits) ────────
@@ -71,16 +71,16 @@ TimeframeLit = Literal["M5", "M15", "H1", "D1"]
 _TF_TO_YF = {
     "D1": {"period": "1y", "interval": "1d"},
     "H1": {"period": "60d", "interval": "1h"},
+    "M30": {"period": "60d", "interval": "30m"},
     "M15": {"period": "30d", "interval": "15m"},
     "M5": {"period": "15d", "interval": "5m"},
-    # Chart-only timeframes — pattern detection doesn't run on these,
-    # the OHLCV endpoint exposes them for the live chart picker.
     "M1": {"period": "7d", "interval": "1m"},
+    # Chart-only extra — exposed by the OHLCV endpoint for the chart picker.
     "Y1": {"period": "5y", "interval": "1wk"},
 }
 
 # When the caller asks for tfX, this is the higher-tf we fetch for MTF.
-_HIGHER_TF = {"M5": "M15", "M15": "H1", "H1": "D1", "D1": None}
+_HIGHER_TF = {"M1": "M5", "M5": "M15", "M15": "M30", "M30": "H1", "H1": "D1", "D1": None}
 
 
 def _fetch_ohlcv(symbol: str, timeframe: str) -> Optional[pd.DataFrame]:
@@ -371,7 +371,7 @@ def history(symbol: str, limit: int = Query(200, ge=1, le=500)) -> HistoryRespon
 # the same yfinance fetch used by the detector so chart prices line up
 # with the pattern's entry/SL/TP — using mock-feed candles produces a
 # scale mismatch where the price lines hang off-screen.
-_OHLCV_TIMEFRAMES = ("M1", "M5", "M15", "H1", "D1", "Y1")
+_OHLCV_TIMEFRAMES = ("M1", "M5", "M15", "M30", "H1", "D1", "Y1")
 
 
 @router.get("/ohlcv/{symbol}")

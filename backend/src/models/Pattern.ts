@@ -13,7 +13,7 @@ import { Schema, model, Types, InferSchemaType } from "mongoose";
 export const PATTERN_DIRECTIONS = ["bullish", "bearish", "continuation", "neutral"] as const;
 export const PATTERN_OUTCOMES = ["pending", "win", "loss", "breakeven"] as const;
 export const PATTERN_GRADES = ["A+", "A", "B", "C"] as const;
-export const PATTERN_TIMEFRAMES = ["M5", "M15", "H1", "D1"] as const;
+export const PATTERN_TIMEFRAMES = ["M1", "M5", "M15", "M30", "H1", "D1"] as const;
 export const PATTERN_CATEGORIES = [
   "single_candle", "two_candle", "three_candle", "multi_candle", "western", "institutional",
 ] as const;

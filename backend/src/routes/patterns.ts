@@ -137,7 +137,7 @@ router.get("/scan", async (req, res, next) => {
 // the same prices the pattern detector ran against — required for the
 // entry/SL/TP price lines to land on-screen alongside the candles.
 
-const CHART_TIMEFRAMES = ["M1", "M5", "M15", "H1", "D1", "Y1"] as const;
+const CHART_TIMEFRAMES = ["M1", "M5", "M15", "M30", "H1", "D1", "Y1"] as const;
 const ohlcvQuerySchema = z.object({
   timeframe: z.enum(CHART_TIMEFRAMES as unknown as [string, ...string[]]).default("D1"),
   limit: z.coerce.number().int().min(20).max(2000).default(300),
