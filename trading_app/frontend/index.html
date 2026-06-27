@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Trading Lab — Pattern Analysis</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="logo">📈</span>
+      <div>
+        <div class="brand-title">Trading Lab</div>
+        <div class="brand-sub">PPS · Multi-Strategy</div>
+      </div>
+    </div>
+    <nav>
+      <button class="nav-item" data-page="pattern">
+        <span class="icon">🎯</span> Pattern Analysis
+      </button>
+      <button class="nav-item" data-page="live">
+        <span class="icon">🔴</span> Live Signals
+      </button>
+      <button class="nav-item" data-page="backtest">
+        <span class="icon">📊</span> Backtest
+      </button>
+      <button class="nav-item" data-page="screener">
+        <span class="icon">🔎</span> Pre-Market Screener
+      </button>
+      <button class="nav-item" data-page="optimizer">
+        <span class="icon">⚙️</span> Optimizer
+      </button>
+      <button class="nav-item" data-page="battle">
+        <span class="icon">⚔️</span> Daily Battle Plan
+      </button>
+    </nav>
+    <div class="sidebar-footer" id="sidebarFooter">Loading…</div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <h1 id="pageTitle">Pattern Analysis</h1>
+      <div class="badges">
+        <span class="badge buy">BUY</span>
+        <span class="badge sell">SELL</span>
+        <span class="badge hold">HOLD</span>
+      </div>
+    </header>
+
+    <!-- =====================================================
+         PAGE: PATTERN ANALYSIS
+         ===================================================== -->
+    <section class="page" data-page="pattern">
+      <div class="card controls">
+        <label>Symbol
+          <select id="paSymbol"></select>
+        </label>
+        <label>Timeframe
+          <select id="paInterval">
+            <option value="5m">5m</option>
+            <option value="15m">15m</option>
+            <option value="1h">1h</option>
+            <option value="1d">1d</option>
+          </select>
+        </label>
+        <label>Lookback (days)
+          <input type="number" id="paDays" min="3" max="30" value="10" />
+        </label>
+        <label>Strategy
+          <select id="paStrategy"></select>
+        </label>
+        <label>Source
+          <select id="paSource">
+            <option value="strategy">📘 Book strategy</option>
+            <option value="ml">🤖 ML 3-class</option>
+            <option value="win">🎯 ML win-filter</option>
+            <option value="pct5" selected>💰 ML +5 % hunter</option>
+          </select>
+        </label>
+        <label class="checkbox-wrap">
+          <input type="checkbox" id="paShowHold" /> Show HOLD dots
+        </label>
+        <button class="primary" id="paRun">▶ Analyse</button>
+      </div>
+
+      <div class="ml-banner" id="mlBanner" hidden>
+        <span class="ml-dot"></span>
+        <span><b>🤖 ML model loaded</b></span>
+        <span class="muted small" id="mlMeta">—</span>
+      </div>
+
+      <div class="legend-card">
+        <div class="legend-item"><span class="arrow-up"></span> BUY — green up-arrow with confidence %</div>
+        <div class="legend-item"><span class="arrow-down"></span> SELL — red down-arrow with confidence %</div>
+        <div class="legend-item"><span class="hold-dot"></span> HOLD — weak or conflicting signals</div>
+      </div>
+
+      <div class="metrics-row">
+        <div class="metric-card"><div class="metric-label">Symbol</div><div class="metric-value" id="mSymbol">—</div></div>
+        <div class="metric-card"><div class="metric-label">Last price</div><div class="metric-value" id="mLast">—</div></div>
+        <div class="metric-card"><div class="metric-label">Current signal</div><div class="metric-value" id="mState">—</div></div>
+        <div class="metric-card"><div class="metric-label">BUY ▲</div><div class="metric-value green" id="mBuy">0</div></div>
+        <div class="metric-card"><div class="metric-label">SELL ▼</div><div class="metric-value red" id="mSell">0</div></div>
+        <div class="metric-card"><div class="metric-label">HOLD •</div><div class="metric-value yellow" id="mHold">0</div></div>
+      </div>
+
+      <div class="card chart-card">
+        <div class="chart-header">
+          <span id="chartTitle">RELIANCE.NS · 5m · Strategy 1: ORB</span>
+          <span id="chartStatus" class="status-pill">ready</span>
+        </div>
+        <div id="paChart" class="chart"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📋 Signal Log</div>
+        <div class="table-wrap">
+          <table id="paLog">
+            <thead><tr>
+              <th>Time</th><th>Signal</th><th>Conf</th><th>Price</th>
+              <th>Stop</th><th>Target</th><th>R:R</th><th>Reason</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================
+         PAGE: LIVE SIGNALS
+         ===================================================== -->
+    <section class="page" data-page="live" hidden>
+      <div class="card controls">
+        <label>Symbol <select id="lvSymbol"></select></label>
+        <label>Timeframe
+          <select id="lvInterval">
+            <option value="5m">5m</option>
+            <option value="15m">15m</option>
+            <option value="1h">1h</option>
+          </select>
+        </label>
+        <button class="primary" id="lvRefresh">↻ Refresh</button>
+        <span class="muted" id="lvUpdated"></span>
+      </div>
+      <div class="card">
+        <div class="card-title">🔴 Latest-bar signal per strategy</div>
+        <div class="table-wrap">
+          <table id="lvTable">
+            <thead><tr>
+              <th>Strategy</th><th>Signal</th><th>Conf</th>
+              <th>Entry</th><th>Stop</th><th>Target</th><th>Reason</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================
+         PAGE: BACKTEST
+         ===================================================== -->
+    <section class="page" data-page="backtest" hidden>
+      <div class="card controls">
+        <label>Symbol <select id="btSymbol"></select></label>
+        <label>Timeframe
+          <select id="btInterval">
+            <option value="5m">5m</option>
+            <option value="15m">15m</option>
+            <option value="1h">1h</option>
+          </select>
+        </label>
+        <label>Lookback (days) <input type="number" id="btDays" min="5" max="30" value="15" /></label>
+        <button class="primary" id="btRun">▶ Run Backtest</button>
+      </div>
+      <div class="card">
+        <div class="card-title">📊 Per-strategy summary</div>
+        <div class="table-wrap">
+          <table id="btTable">
+            <thead><tr>
+              <th>Strategy</th><th>Trades</th><th>Win %</th><th>Return %</th>
+              <th>Sharpe</th><th>PF</th><th>MaxDD %</th><th>5%-Days</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card chart-card">
+        <div class="chart-header"><span>Equity curves</span></div>
+        <div id="btChart" class="chart"></div>
+      </div>
+    </section>
+
+    <!-- =====================================================
+         PAGE: SCREENER
+         ===================================================== -->
+    <section class="page" data-page="screener" hidden>
+      <div class="card controls">
+        <label>Top-N <input type="number" id="scN" min="1" max="10" value="5" /></label>
+        <button class="primary" id="scRun">▶ Scan</button>
+      </div>
+      <div class="card">
+        <div class="card-title">🔎 Today's top picks</div>
+        <div class="table-wrap">
+          <table id="scTable">
+            <thead><tr>
+              <th>Symbol</th><th>Last</th><th>Gap %</th><th>Vol×</th>
+              <th>ATR %</th><th>Rec.</th><th>Confidence</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================
+         PAGE: OPTIMIZER
+         ===================================================== -->
+    <section class="page" data-page="optimizer" hidden>
+      <div class="card controls">
+        <label>Symbol <select id="opSymbol"></select></label>
+        <label>Strategy <select id="opStrategy"></select></label>
+        <label>Days <input type="number" id="opDays" min="5" max="30" value="15" /></label>
+        <button class="primary" id="opRun">▶ Grid + Walk-Forward</button>
+      </div>
+      <div class="metrics-row">
+        <div class="metric-card"><div class="metric-label">Best Sharpe</div><div class="metric-value green" id="opSharpe">—</div></div>
+        <div class="metric-card"><div class="metric-label">Test return</div><div class="metric-value" id="opTestRet">—</div></div>
+        <div class="metric-card"><div class="metric-label">Test trades</div><div class="metric-value" id="opTestN">—</div></div>
+        <div class="metric-card"><div class="metric-label">Best params</div><div class="metric-value small" id="opParams">—</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Grid search results (top 20)</div>
+        <div class="table-wrap"><table id="opTable"><thead><tr id="opHead"></tr></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- =====================================================
+         PAGE: DAILY BATTLE PLAN
+         ===================================================== -->
+    <section class="page" data-page="battle" hidden>
+      <div class="card battle-header">
+        <div>
+          <div class="card-title">⚔️ Daily Battle Plan</div>
+          <div class="muted small">Target +5 % · Kill-switch −2 %</div>
+        </div>
+        <button class="primary" id="bpRefresh">↻ Refresh screener</button>
+      </div>
+      <div class="metrics-row">
+        <div class="metric-card"><div class="metric-label">Daily P&L</div><div class="metric-value" id="bpPnl">₹0</div></div>
+        <div class="metric-card"><div class="metric-label">Progress to +5 %</div>
+          <div class="progress"><div class="progress-fill" id="bpProgress"></div></div>
+          <div class="metric-sub" id="bpProgressLabel">0 %</div>
+        </div>
+        <div class="metric-card"><div class="metric-label">Remaining risk</div><div class="metric-value yellow" id="bpRisk">—</div></div>
+        <div class="metric-card"><div class="metric-label">Status</div><div class="metric-value" id="bpStatus">🟢 LIVE</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🎯 Top-5 picks for today</div>
+        <div class="table-wrap"><table id="bpTable">
+          <thead><tr>
+            <th>Symbol</th><th>Last</th><th>Gap %</th><th>Vol×</th>
+            <th>ATR %</th><th>Rec.</th><th>Conf</th>
+          </tr></thead><tbody></tbody>
+        </table></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">➕ Log a trade</div>
+        <div class="controls">
+          <label>Symbol <input id="bpTrSym" value="RELIANCE" /></label>
+          <label>Strategy <select id="bpTrStrat"></select></label>
+          <label>P&L ₹ <input type="number" id="bpTrPnl" value="0" /></label>
+          <button class="primary" id="bpTrAdd">Add</button>
+        </div>
+        <div class="table-wrap"><table id="bpTrLog">
+          <thead><tr><th>Time</th><th>Symbol</th><th>Strategy</th><th>P&L</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/static/app.js" defer></script>
+</body>
+</html>

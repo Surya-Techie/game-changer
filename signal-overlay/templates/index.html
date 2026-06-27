@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ symbol }} — Signal Overlay</title>
+  <!-- Inline data favicon silences the /favicon.ico 404 without shipping an asset. -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3E📈%3C/text%3E%3C/svg%3E" />
+
+  <!-- Lightweight Charts v4 (CDN). The standalone build exposes `LightweightCharts`. -->
+  <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "JetBrains Mono", monospace;
+      background: #06080d;
+      color: #cdccca;
+    }
+    .page-header { display: flex; align-items: baseline; gap: 16px; margin-bottom: 16px; }
+    .page-header h1 { margin: 0; font-size: 20px; color: #fff; }
+    .page-header .muted { color: #6e6c69; font-size: 12px; }
+    .symbol-picker {
+      margin-left: auto;
+      background: #1c1b19;
+      border: 1px solid #393836;
+      color: #cdccca;
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body data-symbol="{{ symbol }}">
+
+  <div class="page-header">
+    <h1>{{ symbol }}</h1>
+    <span class="muted">Daily candles · last ~6 months</span>
+    <form class="symbol-picker" style="margin-left:auto;">
+      <label style="font-size:11px; color:#6e6c69; margin-right:6px;">Symbol</label>
+      <select name="symbol" onchange="this.form.submit()" class="symbol-picker" style="margin:0;">
+        {% for s in ['RELIANCE','TCS','INFY','HDFCBANK','ICICIBANK','SBIN','AXISBANK','ITC','LT','BHARTIARTL'] %}
+          <option value="{{ s }}" {% if s == symbol %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+
+  {% include "_chart_fragment.html" %}
+
+  <!-- Chart bootstrapper. Reads body[data-symbol] then renders. -->
+  <script src="{{ url_for('static', filename='chart.js') }}"></script>
+</body>
+</html>

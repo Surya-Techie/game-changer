@@ -1,0 +1,121 @@
+{# ----------------------------------------------------------------------
+   Drop-in chart fragment for the signal overlay.
+
+   Include from your main template:
+       {% include "_chart_fragment.html" %}
+
+   Required ids consumed by static/chart.js:
+       #chart            — chart host container
+       #signal-tooltip   — floating crosshair tooltip
+       #signals-toggle   — toolbar button (show / hide all markers)
+
+   Optional: set `data-symbol="RELIANCE"` on <body> (or assign
+   window.QTI_SYMBOL before including chart.js) to override the default.
+   ---------------------------------------------------------------------- #}
+
+<div class="chart-shell">
+
+  <!-- Toolbar (toggle + legend) -->
+  <div class="chart-toolbar">
+    <button id="signals-toggle" type="button" class="toggle-btn" title="Show or hide BUY/SELL/HOLD markers">
+      Signals: ON
+    </button>
+
+    <div class="signal-legend" aria-label="Signal legend">
+      <span class="signal-legend__item"><span class="dot dot-buy">🟢</span> BUY — bullish pattern confluence above threshold</span>
+      <span class="signal-legend__item"><span class="dot dot-sell">🔴</span> SELL — bearish pattern confluence above threshold</span>
+      <span class="signal-legend__item"><span class="dot dot-hold">🟡</span> HOLD — weak or conflicting signals</span>
+    </div>
+  </div>
+
+  <!-- Chart host (relative-positioned so the tooltip can be absolute) -->
+  <div id="chart" class="chart-host"></div>
+
+  <!-- Floating crosshair tooltip (positioned inside .chart-host by JS) -->
+  <div id="signal-tooltip" class="signal-tooltip" style="display:none;"></div>
+</div>
+
+
+<style>
+  /* ─── Shell / toolbar ─────────────────────────────────────────────── */
+  .chart-shell {
+    position: relative;
+    background: #0a0d12;
+    border: 1px solid #1f2a3d;
+    border-radius: 10px;
+    overflow: hidden;
+    padding: 12px;
+  }
+  .chart-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .toggle-btn {
+    background: #1c1b19;
+    border: 1px solid #393836;
+    color: #cdccca;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .toggle-btn:hover { background: #252422; border-color: #4d4b48; }
+  .toggle-btn.signals-off { opacity: 0.6; }
+
+  .chart-host {
+    position: relative;
+    width: 100%;
+    height: 460px;
+  }
+
+  /* ─── Tooltip ─────────────────────────────────────────────────────── */
+  .signal-tooltip {
+    position: absolute;
+    background: #1c1b19;
+    border: 1px solid #393836;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 13px;
+    color: #cdccca;
+    pointer-events: none;
+    z-index: 100;
+    max-width: 220px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+    line-height: 1.35;
+  }
+  .signal-tooltip__head {
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  .signal-tooltip__patterns {
+    margin: 6px 0 0 0;
+    padding-left: 16px;
+    font-size: 12px;
+    color: #a6a39e;
+  }
+  .signal-tooltip__patterns li { margin: 2px 0; }
+
+  .signal-buy   { color: #6daa45; font-weight: 600; }
+  .signal-sell  { color: #dd6974; font-weight: 600; }
+  .signal-hold  { color: #e8af34; font-weight: 600; }
+
+  /* ─── Legend ──────────────────────────────────────────────────────── */
+  .signal-legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-size: 11.5px;
+    color: #8a8784;
+  }
+  .signal-legend__item { display: inline-flex; align-items: center; gap: 6px; }
+  .signal-legend .dot { font-size: 12px; }
+  .signal-legend .dot-buy  { color: #6daa45; }
+  .signal-legend .dot-sell { color: #dd6974; }
+  .signal-legend .dot-hold { color: #e8af34; }
+</style>

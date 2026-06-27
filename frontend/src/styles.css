@@ -1,0 +1,160 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: "Inter", "Plus Jakarta Sans", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: #05070f;
+  overflow-x: hidden;
+}
+
+/* Custom Premium Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(5, 7, 15, 0.5);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.02);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.3);
+}
+
+/* Glassmorphism Outline Card Layer */
+.backdrop-blur-glass {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* Global inputs and buttons override for consistency */
+.input {
+  width: 100%;
+  background: rgba(10, 14, 26, 0.8) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 10px !important;
+  padding: 10px 14px !important;
+  color: #f1f5f9 !important;
+  font-size: 0.875rem !important;
+  line-height: 1.25rem !important;
+  outline: none !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.input:focus {
+  border-color: #6366f1 !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2), 0 0 12px rgba(99, 102, 241, 0.15) !important;
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
+  color: #ffffff !important;
+  border-radius: 10px !important;
+  padding: 10px 16px !important;
+  font-weight: 600 !important;
+  font-size: 0.875rem !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2) !important;
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 6px 18px rgba(99, 102, 241, 0.35) !important;
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0px) !important;
+}
+
+.btn-primary:disabled {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+}
+
+/* Glow Keyframe Animations */
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+}
+
+.glow-active-indigo {
+  position: relative;
+}
+.glow-active-indigo::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  background: linear-gradient(90deg, #6366f1, #10b981);
+  border-radius: inherit;
+  z-index: -1;
+  opacity: 0.4;
+  filter: blur(8px);
+}
+
+/* --- Light theme overrides ---
+   Activated by JS via `<body class="qti-light">`. Soft daylight paper overrides */
+body.qti-light {
+  background: #f1f3f9 !important;
+  color: #0f172a !important;
+}
+body.qti-light .text-white { color: #0f172a !important; }
+body.qti-light .text-slate-200 { color: #1e293b !important; }
+body.qti-light .text-slate-300 { color: #334155 !important; }
+body.qti-light .text-slate-400 { color: #475569 !important; }
+body.qti-light .text-slate-500 { color: #64748b !important; }
+body.qti-light .bg-app-radial { background: #f1f3f9 !important; }
+body.qti-light .bg-bg-panel,
+body.qti-light .bg-bg-panel-solid\/70,
+body.qti-light .bg-bg-panel-solid\/60,
+body.qti-light .bg-bg-panel-solid {
+  background: rgba(255, 255, 255, 0.85) !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+}
+body.qti-light .bg-bg-elevated,
+body.qti-light .bg-bg-elevated\/40,
+body.qti-light .bg-bg-elevated\/60 {
+  background: rgba(0, 0, 0, 0.03) !important;
+  color: #0f172a !important;
+}
+body.qti-light .border-bg-border { border-color: rgba(0, 0, 0, 0.08) !important; }
+body.qti-light .backdrop-blur-glass { backdrop-filter: none !important; }
+
+body.qti-light .input {
+  background: #ffffff !important;
+  border-color: rgba(0, 0, 0, 0.15) !important;
+  color: #0f172a !important;
+}
+body.qti-light .input:focus {
+  border-color: #6366f1 !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15) !important;
+}
+body.qti-light ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+body.qti-light ::-webkit-scrollbar-track {
+  background: transparent;
+}

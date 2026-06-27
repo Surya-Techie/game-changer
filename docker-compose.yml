@@ -1,0 +1,85 @@
+version: "3.9"
+
+# Production-shaped stack: 5 services on an internal network.
+# Only frontend (nginx) is exposed publicly on :80.
+# Run with:   docker compose up -d --build
+# Frontend on http://localhost (port 80). Backend & AI are not exposed by default.
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: qti-mongo
+    restart: unless-stopped
+    volumes:
+      - qti-mongo-data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: qti
+    networks:
+      - qti
+
+  redis:
+    image: redis:7-alpine
+    container_name: qti-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - qti-redis-data:/data
+    networks:
+      - qti
+
+  ai:
+    build:
+      context: ./ai-service
+    container_name: qti-ai
+    restart: unless-stopped
+    environment:
+      AI_PORT: "8000"
+    networks:
+      - qti
+
+  backend:
+    build:
+      context: ./backend
+    container_name: qti-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      MONGO_URI: mongodb://mongo:27017/qti
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-please-set-a-strong-secret-in-production}
+      JWT_EXPIRES_IN: "7d"
+      AI_SERVICE_URL: http://ai:8000
+      SIGNAL_INTERVAL_MS: "15000"
+      MOCK_FEED_ENABLED: "true"
+      USE_INMEM_MONGO: "false"
+      USE_INMEM_CACHE: "false"
+    depends_on:
+      - mongo
+      - redis
+      - ai
+    networks:
+      - qti
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ""
+        VITE_WS_URL: "/ws"
+    container_name: qti-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - qti
+
+volumes:
+  qti-mongo-data:
+  qti-redis-data:
+
+networks:
+  qti:
+    driver: bridge
