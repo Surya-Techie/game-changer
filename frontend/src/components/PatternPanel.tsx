@@ -169,7 +169,12 @@ function PatternRow({ payload }: { payload: WsPatternPayload | WsPatternSignalPa
             <span className={clsx("px-1.5 py-0.5 rounded text-[10px] font-bold", gradeBadge(payload.grade))}>
               {payload.grade}
             </span>
-            <span className="text-[11px] font-mono text-slate-300">{advice.winRate}% Acc</span>
+            <span
+              className="text-[11px] font-mono text-slate-400"
+              title="Reference reliability from technical-analysis literature — NOT measured on your data. See Pattern Analytics for measured win rates."
+            >
+              ~{advice.winRate}% ref
+            </span>
           </div>
         </div>
         <div className="mt-1 h-1 w-full bg-bg-border rounded">

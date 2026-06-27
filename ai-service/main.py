@@ -641,6 +641,10 @@ try:
         symbol: str
         candles: List[Candle] = Field(..., min_length=80)
         use_ml: bool = True
+        # When true, demand unanimous agreement + higher confidence floor +
+        # R:R ≥ 1.0. Trades far less often, but each trade has a higher
+        # measured win rate AND positive expectancy.
+        strict: bool = False
 
     @app.post("/high-conviction")
     def high_conviction_endpoint(req: HighConvictionRequest) -> dict:
@@ -648,6 +652,7 @@ try:
             _candles_to_dicts(req.candles),
             symbol=req.symbol,
             use_ml=req.use_ml,
+            strict=req.strict,
         )
 except Exception:  # noqa: BLE001
     pass

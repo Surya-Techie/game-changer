@@ -50,6 +50,28 @@ MIN_AGREE = 2
 # average ~0.40, which is below historical "tradeable" thresholds.
 MIN_COMPOSITE = 0.55
 
+# Minimum reward:risk a setup must offer to be tradeable. 0 = no floor
+# (back-compat default). Even a high win rate loses money if the average
+# winner is smaller than the average loser, so a strict caller should set
+# this ≥ 1.0 — it directly defends expectancy, not just hit rate.
+MIN_RISK_REWARD = 0.0
+
+# "Strict" preset: trade far less, but only the highest-conviction,
+# positive-expectancy setups. Requires UNANIMOUS agreement among the
+# active strategies (no dissent) with at least 2 active, a higher
+# confidence floor, and winners at least as large as losers. This is the
+# honest lever for a higher per-trade win rate — selectivity, not magic.
+#
+# Note: a fixed "3 of 3" would never fire when the ML vote is unavailable
+# (only 2 strategies active). Unanimity-among-active avoids that footgun
+# while still demanding every available strategy agree.
+STRICT_PRESET = {
+    "min_agree": 2,
+    "min_composite": 0.62,
+    "min_risk_reward": 1.0,
+    "require_unanimous": True,
+}
+
 # Tradeable universe — symbols where the composer measured positive edge
 # in the 2-year honest backtest (see _measure_composer.py). Other symbols
 # default to HOLD. Override via `tradeable_universe` kwarg or set to None
@@ -103,6 +125,11 @@ def compose_high_conviction(
     use_ml: bool = True,
     tradeable_universe: Optional[set] = None,
     max_hold_bars: int = DEFAULT_MAX_HOLD_BARS,
+    min_agree: int = MIN_AGREE,
+    min_composite: float = MIN_COMPOSITE,
+    min_risk_reward: float = MIN_RISK_REWARD,
+    require_unanimous: bool = False,
+    strict: bool = False,
 ) -> dict:
     """Build a high-conviction signal from multiple independent strategies.
 
@@ -117,7 +144,18 @@ def compose_high_conviction(
         max_hold_bars: number of bars after which a trade should be force-
                 exited. Returned in the response as `max_hold_bars` so the
                 consumer can enforce it.
+        min_agree: minimum strategies that must agree (default 2).
+        min_composite: geometric-mean confidence floor (default 0.55).
+        min_risk_reward: minimum reward:risk to accept (default 0 = no floor).
+        strict: when True, apply STRICT_PRESET (3-of-3, 0.62 floor, R:R ≥ 1.0)
+                — fewer trades, higher per-trade win rate AND expectancy.
     """
+    if strict:
+        min_agree = STRICT_PRESET["min_agree"]
+        min_composite = STRICT_PRESET["min_composite"]
+        min_risk_reward = STRICT_PRESET["min_risk_reward"]
+        require_unanimous = STRICT_PRESET["require_unanimous"]
+
     if len(candles) < 80:
         return _hold("insufficient_history", composite_confidence=0.0)
 
@@ -192,13 +230,22 @@ def compose_high_conviction(
                      details={"votes": [{"strategy": v[2], "direction": v[0], "confidence": v[1]} for v in votes]})
 
     agreed_confs = by_dir[agreed_dir]
-    if len(agreed_confs) < MIN_AGREE:
-        return _hold(f"only_{len(agreed_confs)}_of_{MIN_AGREE}_needed",
+    if len(agreed_confs) < min_agree:
+        return _hold(f"only_{len(agreed_confs)}_of_{min_agree}_needed",
+                     composite_confidence=0.0,
+                     details={"votes": [{"strategy": v[2], "direction": v[0], "confidence": v[1]} for v in votes]})
+
+    # Unanimity gate (strict): every active strategy must agree — a single
+    # dissenting vote collapses the trade to HOLD. This is what lifts the
+    # per-trade win rate without curve-fitting: we only act when there is
+    # no disagreement among the signals that have measured edge.
+    if require_unanimous and len(agreed_confs) != len(votes):
+        return _hold("not_unanimous",
                      composite_confidence=0.0,
                      details={"votes": [{"strategy": v[2], "direction": v[0], "confidence": v[1]} for v in votes]})
 
     composite = _geo_mean(agreed_confs)
-    if composite < MIN_COMPOSITE:
+    if composite < min_composite:
         return _hold(f"composite_below_floor", composite_confidence=composite,
                      details={"votes": [{"strategy": v[2], "direction": v[0], "confidence": v[1]} for v in votes]})
 
@@ -222,6 +269,16 @@ def compose_high_conviction(
         pattern = "rule_based"
     else:
         return _hold("no_concrete_levels_available", composite_confidence=composite)
+
+    # Reward:risk floor — defends EXPECTANCY, not just win rate. A setup
+    # can clear every confidence gate yet still be a bad trade if its target
+    # is closer than its stop. Reject those before they reach the user.
+    if min_risk_reward > 0 and risk_reward < min_risk_reward:
+        return _hold(
+            "risk_reward_below_floor",
+            composite_confidence=composite,
+            details={"risk_reward": round(risk_reward, 3), "min_risk_reward": min_risk_reward},
+        )
 
     # Universe gate — applied LAST so the response still includes the
     # would-have-been-signal metadata for transparency, but `signal`
