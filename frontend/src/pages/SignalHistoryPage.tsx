@@ -108,7 +108,7 @@ export default function SignalHistoryPage() {
             <option value="ALL">All symbols</option>
             {SYMBOLS.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
-          <select value={actionFilter} onChange={(e) => { setActionFilter(e.target.value as any); setPage(0); }} className="bg-bg-elevated border border-bg-border rounded px-2 py-1">
+          <select value={actionFilter} onChange={(e) => { setActionFilter(e.target.value as "ALL" | "BUY" | "SELL" | "HOLD"); setPage(0); }} className="bg-bg-elevated border border-bg-border rounded px-2 py-1">
             <option value="ALL">All actions</option>
             <option value="BUY">BUY</option>
             <option value="SELL">SELL</option>

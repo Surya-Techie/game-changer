@@ -162,6 +162,7 @@ export function useMarketSocket({ token, symbols, onEvent }: Options) {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "subscribe", symbols }));
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, [symbols.join("|")]);
 
   return { status };

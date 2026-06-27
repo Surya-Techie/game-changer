@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../store/auth";
 import { Mail, Lock, Activity, ArrowRight } from "lucide-react";
+import { apiErrorMessage } from "../lib/errors";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -20,8 +21,8 @@ export default function LoginPage() {
       const { data } = await api.post("/api/auth/login", { email, password });
       setSession(data.token, data.user);
       nav("/");
-    } catch (err: any) {
-      setError(err?.response?.data?.error ?? "Login failed");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Login failed"));
     } finally {
       setLoading(false);
     }

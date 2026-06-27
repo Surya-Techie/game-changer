@@ -12,6 +12,7 @@ import {
   type PatternAccuracyRollup,
   type PatternTimeframe,
 } from "../lib/patternApi";
+import { apiErrorMessage } from "../lib/errors";
 
 interface SystemStats {
   api: { ok: boolean; uptimeSec: number; node: string; pid: number };
@@ -93,8 +94,8 @@ function AdminGate({ error, onRecovered }: { error: unknown; onRecovered: () => 
       const { data } = await api.post("/api/auth/bootstrap-admin");
       setMsg(`Promoted to ${data.role} (${data.reason}). Refresh.`);
       onRecovered();
-    } catch (err: any) {
-      setMsg(err?.response?.data?.error ?? "Bootstrap failed");
+    } catch (err) {
+      setMsg(apiErrorMessage(err, "Bootstrap failed"));
     } finally {
       setBusy(false);
     }

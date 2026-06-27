@@ -5,6 +5,7 @@ import { api } from "../../lib/api";
 import { overlayManager } from "../../lib/overlayManager";
 import { usePremium } from "../../store/premium";
 import PremiumIndicatorCard from "../PremiumIndicatorCard";
+import { apiErrorMessage } from "../../lib/errors";
 
 interface IchimokuResponse {
   symbol: string;
@@ -67,8 +68,8 @@ export default function IchimokuIndicator({ symbol }: { symbol: string }) {
       setData(data as IchimokuResponse);
       setUpdated(Date.now());
       setLoadState("ichimoku", "ready");
-    } catch (err: any) {
-      const msg = err?.response?.data?.error ?? err.message ?? "Failed";
+    } catch (err) {
+      const msg = apiErrorMessage(err, "Failed");
       setError(msg);
       setLoadState("ichimoku", "error", msg);
     }

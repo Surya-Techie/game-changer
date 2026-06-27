@@ -106,6 +106,10 @@ function evaluateIndicatorAlert(type: string, value: number | undefined, candles
 
 const lastTickPriceMap = new Map<string, number>();
 
+// Alert docs are hydrated Mongoose documents that get mutated and saved;
+// Mongoose's find() return type collapses unhelpfully across versions, so
+// this file deliberately treats them as `any` at the boundary.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function fireAlert(alert: any, observed: number | undefined) {
   alert.triggerCount += 1;
   alert.lastTriggeredAt = new Date();
@@ -261,6 +265,7 @@ function startFormulaEvaluator() {
     // Mongoose's `find()` return type collapses to `unknown[]` here in some
     // versions, and the rest of this file already treats alert docs as
     // `any` (see fireAlert above). We follow the same pattern for consistency.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let alerts: any[] = [];
     try {
       alerts = await Alert.find({ enabled: true, type: "INDICATOR_FORMULA" });
@@ -270,6 +275,7 @@ function startFormulaEvaluator() {
     }
     if (alerts.length === 0) return;
     // Group by (symbol, timeframe) so we only hit /indicators/snapshot once per group.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const groups = new Map<string, any[]>();
     for (const a of alerts) {
       const tf = (a.formulaTimeframe as string | undefined) ?? "M15";
@@ -303,6 +309,7 @@ function startFormulaEvaluator() {
 }
 
 async function evaluateFormulaAlert(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   a: any,
   snapshot: Record<string, number | null>
 ) {

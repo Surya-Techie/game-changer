@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../store/auth";
 import { Mail, Lock, User, Activity, ArrowRight } from "lucide-react";
+import { apiErrorMessage } from "../lib/errors";
 
 export default function RegisterPage() {
   const [email, setEmail] = useState("");
@@ -21,8 +22,8 @@ export default function RegisterPage() {
       const { data } = await api.post("/api/auth/register", { email, password, name });
       setSession(data.token, data.user);
       nav("/");
-    } catch (err: any) {
-      setError(err?.response?.data?.error ?? "Registration failed");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Registration failed"));
     } finally {
       setLoading(false);
     }

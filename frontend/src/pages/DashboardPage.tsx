@@ -24,7 +24,6 @@ import SectorHeatmap from "../components/SectorHeatmap";
 import MarketMovers from "../components/MarketMovers";
 import NotificationsDrawer, { type Notification } from "../components/NotificationsDrawer";
 import AIAssistantCard from "../components/AIAssistantCard";
-import GlassCard from "../components/GlassCard";
 import PredictionCard from "../components/PredictionCard";
 import GainzAlphaCard from "../components/GainzAlphaCard";
 import NewsPanel from "../components/NewsPanel";
@@ -37,7 +36,6 @@ import EconomicCalendarBanner from "../components/EconomicCalendarBanner";
 import BulkDealsPanel from "../components/BulkDealsPanel";
 import PremiumIndicatorsToolbar from "../components/PremiumIndicatorsToolbar";
 import PremiumIndicatorsPanel from "../components/PremiumIndicatorsPanel";
-import NextCandleCard from "../components/NextCandleCard";
 import { usePremiumShortcuts } from "../hooks/usePremiumShortcuts";
 import { overlayManager } from "../lib/overlayManager";
 import Tabs, { type TabDef } from "../components/Tabs";
@@ -122,6 +120,7 @@ export default function DashboardPage() {
       setSymbols(list);
       setActive(list[0]);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, [wlQuery.data]);
 
   // Listen for keyboard-shortcut symbol picks + URL ?symbol=

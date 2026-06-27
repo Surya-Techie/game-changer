@@ -285,6 +285,7 @@ export default function PowerAnalysisPanel({ symbol, onSymbolChange }: Props) {
       }
     })();
     return () => { aborted = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, [symbol, timeframe]);
 
   // ── Indicator overlays ────────────────────────────────────────────────

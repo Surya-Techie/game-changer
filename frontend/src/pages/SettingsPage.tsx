@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { useAuth } from "../store/auth";
 import { usePrefs } from "../store/prefs";
 import BrokerSection from "../components/BrokerSection";
+import { apiErrorMessage } from "../lib/errors";
 
 interface AutotradeSettings {
   autoTradeMode: "OFF" | "SEMI" | "AUTO";
@@ -68,6 +69,7 @@ export default function SettingsPage() {
       if (typeof s.autoRefreshSec === "number") setLocalRefresh(s.autoRefreshSec);
     });
     api.get("/api/2fa/status").then(({ data }) => setTwoFaEnabled(Boolean(data?.enabled)));
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, []);
 
   async function patch(patch: Partial<AutotradeSettings>) {
@@ -401,8 +403,8 @@ export default function SettingsPage() {
       const { data } = await api.post("/api/2fa/enroll");
       setQr(data.qr);
       setSecret(data.secret);
-    } catch (err: any) {
-      setTwofaError(err?.response?.data?.error ?? "Enroll failed");
+    } catch (err) {
+      setTwofaError(apiErrorMessage(err, "Enroll failed"));
     } finally {
       setBusy(false);
     }
@@ -417,8 +419,8 @@ export default function SettingsPage() {
       setTwoFaEnabled(true);
       setQr(null);
       setSecret(null);
-    } catch (err: any) {
-      setTwofaError(err?.response?.data?.error ?? "Verify failed");
+    } catch (err) {
+      setTwofaError(apiErrorMessage(err, "Verify failed"));
     } finally {
       setBusy(false);
     }
@@ -432,8 +434,8 @@ export default function SettingsPage() {
       setTwoFaEnabled(false);
       setCode("");
       setRecovery(null);
-    } catch (err: any) {
-      setTwofaError(err?.response?.data?.error ?? "Disable failed");
+    } catch (err) {
+      setTwofaError(apiErrorMessage(err, "Disable failed"));
     } finally {
       setBusy(false);
     }

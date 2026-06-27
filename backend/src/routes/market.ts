@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
 import { getCandles, listSymbols } from "../services/candleAggregator.js";
-import { fetchPatternOhlcv } from "../services/aiClient.js";
+import { fetchPatternOhlcv, type PatternChartTimeframe } from "../services/aiClient.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -38,7 +38,7 @@ router.get("/candles/:symbol", async (req, res, next) => {
     const mockSymbols = listSymbols();
 
     // Map timeframe names to backend/yfinance formats
-    const tfMap: Record<string, string> = {
+    const tfMap: Record<string, PatternChartTimeframe> = {
       "1m": "M1",
       "5m": "M5",
       "15m": "M15",
@@ -63,7 +63,7 @@ router.get("/candles/:symbol", async (req, res, next) => {
     // source of truth for chart history; the aggregator still works
     // for downstream pattern / signal engines that need live ticks.
     void mockSymbols;
-    const ohlcv = await fetchPatternOhlcv(symbol, activeTf as any, limit);
+    const ohlcv = await fetchPatternOhlcv(symbol, activeTf, limit);
     if (ohlcv && ohlcv.candles?.length) {
       res.json({ symbol, candles: ohlcv.candles });
     } else {

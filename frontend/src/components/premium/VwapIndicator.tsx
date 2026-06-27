@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import clsx from "clsx";
-import type { IChartApi, ISeriesApi, LineStyle, UTCTimestamp } from "lightweight-charts";
+import type { LineStyle, UTCTimestamp } from "lightweight-charts";
 import { api } from "../../lib/api";
 import { overlayManager } from "../../lib/overlayManager";
 import { usePremium } from "../../store/premium";
 import PremiumIndicatorCard from "../PremiumIndicatorCard";
+import { apiErrorMessage } from "../../lib/errors";
 
 interface VwapResponse {
   symbol: string;
@@ -67,11 +67,12 @@ export default function VwapIndicator({ symbol }: { symbol: string }) {
       setData(data as VwapResponse);
       setUpdated(Date.now());
       setLoadState("vwap", "ready");
-    } catch (err: any) {
-      const msg = err?.response?.data?.error ?? err.message ?? "Failed";
+    } catch (err) {
+      const msg = apiErrorMessage(err, "Failed");
       setError(msg);
       setLoadState("vwap", "error", msg);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, [symbol, anchorBars.join(","), setLoadState]);
 
   useEffect(() => {

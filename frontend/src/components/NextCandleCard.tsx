@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import clsx from "clsx";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { api } from "../lib/api";
 import { TrendingUp, TrendingDown, Minus, RefreshCw, CandlestickChart, Clock, Zap } from "lucide-react";
 
@@ -184,7 +184,7 @@ export default function NextCandleCard({ symbol, recentCandles }: Props) {
       const { data } = await api.get(`/api/prediction/${symbol}`);
       setPrediction(data as PredictionData);
       setLastFetch(Date.now());
-    } catch (err: any) {
+    } catch (err) {
       setError("Prediction unavailable");
     } finally {
       setLoading(false);
@@ -219,7 +219,6 @@ export default function NextCandleCard({ symbol, recentCandles }: Props) {
     const last = recentCandles[recentCandles.length - 1];
     const predPrice = prediction.predictedPrice;
     const lastClose = last.c;
-    const isUp = predPrice >= lastClose;
 
     // Estimate OHLC for the predicted candle based on typical volatility
     const recentHighs = recentCandles.slice(-10).map((c) => (c.h - c.c) / c.c);
@@ -247,7 +246,7 @@ export default function NextCandleCard({ symbol, recentCandles }: Props) {
     if (sec < 5) return "just now";
     if (sec < 60) return `${sec}s ago`;
     return `${Math.floor(sec / 60)}m ago`;
-  }, [lastFetch, prediction]); // re-eval on prediction changes
+  }, [lastFetch]);
 
   // Not ready state
   if (!loading && prediction && !prediction.ready) {

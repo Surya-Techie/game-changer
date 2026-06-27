@@ -3,6 +3,7 @@ import clsx from "clsx";
 import { api } from "../../lib/api";
 import { usePremium } from "../../store/premium";
 import PremiumIndicatorCard from "../PremiumIndicatorCard";
+import { apiErrorMessage } from "../../lib/errors";
 
 interface OrderFlowResponse {
   symbol: string;
@@ -43,8 +44,8 @@ export default function OrderFlowIndicator({ symbol }: { symbol: string }) {
       setData(data as OrderFlowResponse);
       setUpdated(Date.now());
       setLoadState("orderflow", "ready");
-    } catch (err: any) {
-      const msg = err?.response?.data?.error ?? err.message ?? "Failed";
+    } catch (err) {
+      const msg = apiErrorMessage(err, "Failed");
       setError(msg);
       setLoadState("orderflow", "error", msg);
     }

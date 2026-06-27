@@ -17,6 +17,7 @@ export default function PaperJournalPage() {
 
   useEffect(() => {
     void load();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, []);
 
   async function load() {

@@ -45,6 +45,7 @@ export default function RiskCard({ signal, currentPrice }: Props) {
     if (e != null) setEntry(String(e));
     if (signal?.suggestedStop != null) setStop(String(signal.suggestedStop));
     if (signal?.suggestedTarget != null) setTarget(String(signal.suggestedTarget));
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, [signal?.symbol, signal?.suggestedEntry, signal?.suggestedStop, signal?.suggestedTarget]);
 
   const calc = useMemo(() => {

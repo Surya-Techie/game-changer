@@ -11,7 +11,7 @@
  * and react.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import clsx from "clsx";
 import { motion } from "framer-motion";
 import { PREMIUM_KEYS, PREMIUM_META, usePremium, type PremiumKey } from "../store/premium";
@@ -88,10 +88,10 @@ function Chip({ k, on, busy, onClick }: { k: PremiumKey; on: boolean; busy: bool
         style={{
           // Custom-property lets the shadow + bg react to the indicator color.
           // CSS variables work inside Tailwind's arbitrary-value bracket above.
-          ["--chip-color" as any]: meta.color,
+          "--chip-color": meta.color,
           background: on ? meta.bg : undefined,
           borderColor: on ? meta.color : undefined,
-        }}
+        } as CSSProperties}
       >
         <span className="text-sm leading-none">
           {busy ? <Spinner color={meta.color} /> : meta.icon}

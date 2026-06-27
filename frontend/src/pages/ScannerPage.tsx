@@ -6,6 +6,7 @@ import { api } from "../lib/api";
 import { useAuth } from "../store/auth";
 import { useMarketSocket, type WsEvent, type WsPatternPayload } from "../lib/socket";
 import { scanPatterns, type PatternTimeframe } from "../lib/patternApi";
+import { apiErrorMessage } from "../lib/errors";
 
 interface ScanRow {
   symbol: string;
@@ -23,9 +24,9 @@ interface ScanRow {
   matched: boolean;
 }
 
-interface Preset { id: string; label: string; conditions: any[] }
-
 interface Condition { field: string; operator: "<" | "<=" | ">" | ">=" | "==" | "!="; value: number }
+
+interface Preset { id: string; label: string; conditions: Condition[] }
 
 const FIELDS = [
   { v: "rsi14", label: "RSI(14)" },
@@ -61,8 +62,8 @@ export default function ScannerPage() {
     try {
       const { data } = await api.post(`/api/scanner/preset/${id}`, {});
       setRows((data.rows ?? []) as ScanRow[]);
-    } catch (err: any) {
-      setError(err?.response?.data?.error ?? "Scan failed");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Scan failed"));
     } finally {
       setRunning(false);
     }
@@ -74,8 +75,8 @@ export default function ScannerPage() {
     try {
       const { data } = await api.post("/api/scanner/run", { conditions, combinator, includeComposite });
       setRows((data.rows ?? []) as ScanRow[]);
-    } catch (err: any) {
-      setError(err?.response?.data?.error ?? "Scan failed");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Scan failed"));
     } finally {
       setRunning(false);
     }
@@ -184,7 +185,7 @@ export default function ScannerPage() {
             >+ Add condition</button>
             <label className="text-xs text-slate-400 flex items-center gap-2">
               Combinator
-              <select value={combinator} onChange={(e) => setCombinator(e.target.value as any)} className="bg-bg-elevated border border-bg-border rounded px-2 py-1">
+              <select value={combinator} onChange={(e) => setCombinator(e.target.value as "AND" | "OR")} className="bg-bg-elevated border border-bg-border rounded px-2 py-1">
                 <option value="AND">AND</option>
                 <option value="OR">OR</option>
               </select>
@@ -409,8 +410,8 @@ function PatternScanTab() {
       }
       setRows(merged);
       setLastScanAt(Date.now());
-    } catch (err: any) {
-      setError(err?.response?.data?.error ?? err.message ?? "Scan failed");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Scan failed"));
     } finally {
       setRunning(false);
     }

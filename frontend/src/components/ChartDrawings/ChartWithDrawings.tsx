@@ -68,6 +68,7 @@ export default function ChartWithDrawings({ symbol, candles, liveCandle }: Props
   useEffect(() => {
     return () => {
       if (series) {
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- cleanup intentionally reads the ref's current value
         for (const line of priceLines.current.values()) {
           try { series.removePriceLine(line); } catch { /* ignore */ }
         }

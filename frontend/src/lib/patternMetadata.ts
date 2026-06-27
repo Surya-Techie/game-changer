@@ -49,7 +49,7 @@ export function getPatternAdvice(patternName: string, fallbackDirection: string 
   const meta = match ? PATTERN_WIN_RATES[match] : null;
 
   const winRate = meta ? meta.winRate : 50.0;
-  const direction = meta ? meta.direction : (fallbackDirection.toLowerCase() as any);
+  const direction = meta ? meta.direction : (fallbackDirection.toLowerCase() as PatternMeta["direction"]);
 
   let strengthText = "";
   let badgeClass = "";

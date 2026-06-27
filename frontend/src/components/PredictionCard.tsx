@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import clsx from "clsx";
 import { motion } from "framer-motion";
 import { api } from "../lib/api";
+import { apiErrorMessage } from "../lib/errors";
 
 interface Prediction {
   ready: boolean;
@@ -56,10 +57,9 @@ export default function PredictionCard({ symbol }: { symbol: string }) {
     try {
       await api.post(`/api/ml/train/${symbol}`);
       await fetchPrediction();
-    } catch (err: any) {
+    } catch (err) {
       // 403 means not admin — surface helpful hint
-      // eslint-disable-next-line no-alert
-      alert(err?.response?.data?.error ?? "Train failed (admin only)");
+      alert(apiErrorMessage(err, "Train failed (admin only)"));
     } finally { setTraining(false); }
   }
 
@@ -67,6 +67,7 @@ export default function PredictionCard({ symbol }: { symbol: string }) {
     let aborted = false;
     void fetchPrediction().then(() => { if (aborted) setP(null); });
     return () => { aborted = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, [symbol]);
 
   if (loading && !p) {

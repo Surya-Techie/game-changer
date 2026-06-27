@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { motion } from "framer-motion";
@@ -57,6 +57,7 @@ export default function WatchlistPage() {
       .then((data) => setAllStocks(data))
       .catch((err) => console.error("Error loading stocks database:", err))
       .finally(() => setLoadingStocks(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, []);
 
   async function loadLists() {
@@ -79,7 +80,7 @@ export default function WatchlistPage() {
       for (const sym of active.symbols) {
         const { data } = await api.get(`/api/market/candles/${sym}?limit=60`);
         const candles = data.candles ?? [];
-        const closes = candles.map((c: any) => c.c);
+        const closes = candles.map((c: { c: number }) => c.c);
         const first = closes[0];
         const last = closes[closes.length - 1];
         base[sym] = {
@@ -92,6 +93,7 @@ export default function WatchlistPage() {
       if (!aborted) setRows(base);
     })();
     return () => { aborted = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, [activeId, active?.symbols.join("|")]);
 
   async function runScan() {

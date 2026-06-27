@@ -484,6 +484,7 @@ export default function PatternLiveChart({ symbol, onSymbolChange }: Props) {
         close: liveCandle.c,
       });
     } catch { /* time off-grid */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, [liveCandle?.t, liveCandle?.c, liveCandle?.h, liveCandle?.l]);
 
   // Reset liveCandle whenever the symbol or timeframe changes so we

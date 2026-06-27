@@ -123,10 +123,10 @@ export function consensus(
     const rrCap = Math.min(Math.max(p.risk_reward ?? 1, 0), 4) / 2; // 0..2
     const win   = Math.max(0.4, p.historical_win_rate ?? 0.5);
 
-    const filters = p.filters ?? {};
-    const trendAlign  = Boolean((filters as any).trend_alignment ?? false);
-    const volConfirm  = Boolean((filters as any).volume_confirmation ?? false);
-    const mtfAgreement= Boolean((filters as any).mtf_agreement ?? false);
+    const filters = (p.filters ?? {}) as Record<string, unknown>;
+    const trendAlign  = Boolean(filters.trend_alignment ?? false);
+    const volConfirm  = Boolean(filters.volume_confirmation ?? false);
+    const mtfAgreement= Boolean(filters.mtf_agreement ?? false);
 
     const weight =
       conf *

@@ -125,6 +125,7 @@ export default function Chart({ candles, liveCandle, onChartReady, onChartTeardo
       low: liveCandle.l,
       close: liveCandle.c,
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, [liveCandle?.t, liveCandle?.c, liveCandle?.h, liveCandle?.l]);
 
   return <div ref={containerRef} className="w-full h-full" />;

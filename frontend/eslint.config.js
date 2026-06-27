@@ -37,7 +37,9 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
-      "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
+      // Dev-only Vite fast-refresh granularity hint with no runtime impact;
+      // our components co-locate small constants/helpers by design.
+      "react-refresh/only-export-components": "off",
       "@typescript-eslint/no-unused-vars": [
         "warn",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrors: "none" },

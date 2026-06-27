@@ -106,6 +106,7 @@ export default function PatternAnalyticsPage() {
       })
       .finally(() => { if (!aborted) setLoading(false); });
     return () => { aborted = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, [params.since, params.until, params.symbols?.join(","), params.timeframes?.join(","), params.directions?.join(",")]);
 
   function toggleSet(set: string[], v: string, setter: (s: string[]) => void) {

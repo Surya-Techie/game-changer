@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import AnimatedNumber from "./AnimatedNumber";
-import { ArrowUpRight, ArrowDownRight, Power, ShieldAlert, Cpu } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, Power, Cpu } from "lucide-react";
 
 export interface Portfolio {
   capital: number;

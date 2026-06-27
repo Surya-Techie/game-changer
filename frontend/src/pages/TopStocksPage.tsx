@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import TopStockCard, { type TopStockRow } from "../components/TopStockCard";
+import { apiErrorMessage } from "../lib/errors";
 
 type SortKey = "composite" | "change" | "ml" | "ai";
 type FilterKey = "all" | "buy" | "sell" | "neutral";
@@ -22,8 +23,8 @@ export default function TopStocksPage() {
       const { data } = await api.get(`/api/top-stocks${force ? "?force=true" : ""}`);
       setRows(data.rows ?? []);
       setTs(data.ts ?? Date.now());
-    } catch (err: any) {
-      setError(err?.response?.data?.error ?? err.message ?? "Failed");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Failed"));
     } finally {
       setLoading(false);
     }

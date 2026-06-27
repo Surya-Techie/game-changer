@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import clsx from "clsx";
 import { motion } from "framer-motion";
 import { api } from "../lib/api";
+import { apiErrorMessage } from "../lib/errors";
 
 interface TfRow {
   bars: number;
@@ -38,8 +39,8 @@ export default function MTFPanel({ symbol }: { symbol: string }) {
           if (data.error) setError(data.error);
           else { setData(data as MtfResponse); setError(null); }
         }
-      } catch (err: any) {
-        if (!aborted) setError(err?.response?.data?.error ?? "MTF failed");
+      } catch (err) {
+        if (!aborted) setError(apiErrorMessage(err, "MTF failed"));
       } finally {
         if (!aborted) setLoading(false);
       }

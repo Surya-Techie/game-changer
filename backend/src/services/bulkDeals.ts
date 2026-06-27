@@ -22,7 +22,6 @@ let cache: CacheEntry | null = null;
 const TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 const NSE_BULK = "https://nsearchives.nseindia.com/content/equities/bulk.csv";
-const NSE_BLOCK = "https://nsearchives.nseindia.com/content/equities/block.csv";
 
 /**
  * Parse the NSE bulk/block deals CSV.

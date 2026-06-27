@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { motion } from "framer-motion";
-import { Bell, ArrowUpRight, ArrowDownRight, Radio, ShieldAlert, Search } from "lucide-react";
+import { Bell, ArrowUpRight, ArrowDownRight, Radio, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { fetchPatternOhlcv } from "../lib/patternApi";
 
