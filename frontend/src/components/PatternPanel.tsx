@@ -260,6 +260,16 @@ function HistoryTab({ loading, patterns }: { loading: boolean; patterns: Pattern
 // ─── Accuracy tab ─────────────────────────────────────────────────────────
 
 function AccuracyTab({ loading, available, rollups }: { loading: boolean; available: boolean; rollups: PatternAccuracyRollup[] }) {
+  // Hooks must run on every render regardless of the early returns below,
+  // so compute the ranking before any conditional return.
+  // Sort highest win-rate first; require at least 5 trades to surface.
+  const ranked = useMemo(() => {
+    return [...rollups]
+      .filter((r) => r.total_detected >= 5)
+      .sort((a, b) => b.win_rate - a.win_rate)
+      .slice(0, 25);
+  }, [rollups]);
+
   if (loading) return <div className="text-xs text-slate-400 py-4 text-center">Loading…</div>;
   if (!available) {
     return (
@@ -271,13 +281,6 @@ function AccuracyTab({ loading, available, rollups }: { loading: boolean; availa
   if (rollups.length === 0) {
     return <div className="text-xs text-slate-400 py-4 text-center">No outcomes resolved yet. Pattern win/loss accumulates as the engine resolves pending detections.</div>;
   }
-  // Sort highest win-rate first; require at least 5 trades to surface.
-  const ranked = useMemo(() => {
-    return [...rollups]
-      .filter((r) => r.total_detected >= 5)
-      .sort((a, b) => b.win_rate - a.win_rate)
-      .slice(0, 25);
-  }, [rollups]);
   const max = ranked.length ? Math.max(0.01, ranked[0].win_rate) : 1;
   return (
     <div className="space-y-1.5">

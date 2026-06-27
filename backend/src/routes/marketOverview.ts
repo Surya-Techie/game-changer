@@ -72,7 +72,7 @@ router.get("/", async (_req, res, next) => {
     // doesn't jitter wildly). These get swapped with real feeds later.
     const hourBucket = Math.floor(Date.now() / (1000 * 60 * 60));
     const synthRng = (seed: number) => {
-      let x = Math.sin(seed * 9301 + 49297) * 233280;
+      const x = Math.sin(seed * 9301 + 49297) * 233280;
       return x - Math.floor(x);
     };
     const indiaVix = 13 + synthRng(hourBucket) * 8;     // 13–21

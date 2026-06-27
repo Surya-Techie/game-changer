@@ -49,10 +49,10 @@ api.interceptors.response.use(
   },
   (err) => {
     if (err?.response?.status === 401) {
+      // Login/logout are disabled for now — drop any stale token but don't
+      // redirect (the /login route no longer exists). Protected endpoints
+      // simply fail and their panels render their own empty/error state.
       localStorage.removeItem("qti.token");
-      if (!window.location.pathname.startsWith("/login")) {
-        window.location.href = "/login";
-      }
     } else if (isNetworkError(err)) {
       setStatus("offline");
     } else {

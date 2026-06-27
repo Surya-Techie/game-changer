@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import LoginPage from "./pages/LoginPage";
-import RegisterPage from "./pages/RegisterPage";
 import DashboardPage from "./pages/DashboardPage";
 import BacktestPage from "./pages/BacktestPage";
 import AdminPage from "./pages/AdminPage";
@@ -24,19 +22,12 @@ import BackendOfflineBanner from "./components/BackendOfflineBanner";
 import DisclaimerModal from "./components/DisclaimerModal";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
-import { useAuth } from "./store/auth";
 import "./store/prefs"; // applies the initial theme class on first load
 
 const UNIVERSE = [
   "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "AXISBANK", "ITC", "LT", "BHARTIARTL",
   "MARUTI", "KOTAKBANK", "BAJFINANCE", "HCLTECH", "WIPRO", "ASIANPAINT", "NESTLEIND", "TITAN", "ADANIENT", "SUNPHARMA",
 ];
-
-function RequireAuth({ children }: { children: React.ReactNode }) {
-  const token = useAuth((s) => s.token);
-  if (!token) return <Navigate to="/login" replace />;
-  return <>{children}</>;
-}
 
 export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -74,24 +65,22 @@ export default function App() {
       <BackendOfflineBanner />
       <DisclaimerModal />
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
-        <Route path="/" element={<RequireAuth><DashboardPage /></RequireAuth>} />
-        <Route path="/backtest" element={<RequireAuth><BacktestPage /></RequireAuth>} />
-        <Route path="/admin" element={<RequireAuth><AdminPage /></RequireAuth>} />
-        <Route path="/settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
-        <Route path="/watchlist" element={<RequireAuth><WatchlistPage /></RequireAuth>} />
-        <Route path="/scanner" element={<RequireAuth><ScannerPage /></RequireAuth>} />
-        <Route path="/signals" element={<RequireAuth><SignalHistoryPage /></RequireAuth>} />
-        <Route path="/alerts" element={<RequireAuth><AlertsPage /></RequireAuth>} />
-        <Route path="/portfolio" element={<RequireAuth><PortfolioPage /></RequireAuth>} />
-        <Route path="/calendar" element={<RequireAuth><CalendarPage /></RequireAuth>} />
-        <Route path="/paper" element={<RequireAuth><PaperPage /></RequireAuth>} />
-        <Route path="/paper/analytics" element={<RequireAuth><PaperAnalyticsPage /></RequireAuth>} />
-        <Route path="/paper/journal" element={<RequireAuth><PaperJournalPage /></RequireAuth>} />
-        <Route path="/options" element={<RequireAuth><OptionsPage /></RequireAuth>} />
-        <Route path="/patterns/analytics" element={<RequireAuth><PatternAnalyticsPage /></RequireAuth>} />
-        <Route path="/patterns/pps" element={<RequireAuth><PpsSignalsPage /></RequireAuth>} />
+        <Route path="/" element={<DashboardPage />} />
+        <Route path="/backtest" element={<BacktestPage />} />
+        <Route path="/admin" element={<AdminPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/watchlist" element={<WatchlistPage />} />
+        <Route path="/scanner" element={<ScannerPage />} />
+        <Route path="/signals" element={<SignalHistoryPage />} />
+        <Route path="/alerts" element={<AlertsPage />} />
+        <Route path="/portfolio" element={<PortfolioPage />} />
+        <Route path="/calendar" element={<CalendarPage />} />
+        <Route path="/paper" element={<PaperPage />} />
+        <Route path="/paper/analytics" element={<PaperAnalyticsPage />} />
+        <Route path="/paper/journal" element={<PaperJournalPage />} />
+        <Route path="/options" element={<OptionsPage />} />
+        <Route path="/patterns/analytics" element={<PatternAnalyticsPage />} />
+        <Route path="/patterns/pps" element={<PpsSignalsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <CommandPalette

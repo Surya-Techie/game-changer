@@ -15,7 +15,6 @@ import {
   TrendingUp,
   Settings,
   Shield,
-  LogOut,
   User,
   Activity,
   Search
@@ -31,7 +30,6 @@ interface Props {
 
 export default function Sidebar({ symbols, prices, prevPrices, active, onSelect }: Props) {
   const user = useAuth((s) => s.user);
-  const clear = useAuth((s) => s.clear);
   const loc = useLocation();
 
   return (
@@ -225,13 +223,6 @@ export default function Sidebar({ symbols, prices, prevPrices, active, onSelect 
           </div>
           <div className="text-[10px] text-slate-500 truncate">{user?.email}</div>
         </div>
-        <button
-          onClick={clear}
-          className="h-8 w-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-accent-sell hover:bg-accent-sell/10 transition-all"
-          title="Sign out"
-        >
-          <LogOut className="h-4 w-4" />
-        </button>
       </div>
     </aside>
   );

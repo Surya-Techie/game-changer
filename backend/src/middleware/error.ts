@@ -10,7 +10,7 @@ export function errorHandler(
   err: unknown,
   _req: Request,
   res: Response,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // Express identifies error handlers by their 4-arg arity, so _next must stay.
   _next: NextFunction
 ) {
   if (err instanceof ZodError) {

@@ -104,7 +104,7 @@ export async function resetAccount(userId: string, accountId: string) {
 }
 
 export async function getActiveAccount(userId: string) {
-  let account = await PaperAccount.findOne({ userId, isActive: true });
+  const account = await PaperAccount.findOne({ userId, isActive: true });
   if (account) return account;
   // Auto-create a default account on first paper page visit.
   const exists = await PaperAccount.findOne({ userId });
