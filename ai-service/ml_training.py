@@ -75,6 +75,16 @@ FEATURE_NAMES = [
 N_FEATURES = len(FEATURE_NAMES)
 
 
+def _recency_weights(n: int, half_life: float = 250.0) -> np.ndarray:
+    """Exponential-decay sample weights — most recent bar = 1.0, decaying
+    going back with the given half-life (in bars). Keeps the model adapted
+    to the current regime instead of averaging over stale history."""
+    if n <= 0:
+        return np.ones(0, dtype=float)
+    idx = np.arange(n, dtype=float)
+    return 0.5 ** ((n - 1 - idx) / max(1.0, half_life))
+
+
 def _safe_log_div(num: np.ndarray, den: np.ndarray) -> np.ndarray:
     """log(num/den) but tolerant of zeros/negatives — returns 0 for bad rows."""
     den_safe = np.where(den > 0, den, np.nan)
@@ -353,35 +363,54 @@ def train_symbol(symbol: str, candles: List[dict], horizon: int = 5) -> dict:
     # Walk-forward split: 70% train, 15% calibration, 15% holdout (chronological).
     # The middle calibration block is essential — using the same holdout to
     # both fit the probability calibrator and report accuracy would leak.
+    #
+    # PURGE/EMBARGO: each label looks `horizon` bars into the future, so the
+    # last `horizon` training rows share price bars with the first
+    # calibration rows — a subtle look-ahead leak across the boundary. We
+    # drop `horizon` rows after each split so train/cal/test never overlap
+    # in time (López de Prado purging). This makes the holdout numbers
+    # honest, even if it shaves a few samples.
     n = X.shape[0]
+    embargo = max(0, horizon)
     split_train = int(n * 0.70)
     split_cal = int(n * 0.85)
     X_train, y_train = X[:split_train], y[:split_train]
-    X_cal, y_cal = X[split_train:split_cal], y[split_train:split_cal]
-    X_test, y_test = X[split_cal:], y[split_cal:]
-    vol_test = vol_scalers[split_cal:]
+    X_cal, y_cal = X[split_train + embargo:split_cal], y[split_train + embargo:split_cal]
+    X_test, y_test = X[split_cal + embargo:], y[split_cal + embargo:]
+
+    # Recency weighting: recent regime should count more than 5-year-old
+    # bars. Exponential decay with a ~1-year (250-bar) half-life. Tree
+    # models and the GB classifier accept sample_weight; the MLP does not,
+    # so it trains unweighted (it already has early-stopping regularisation).
+    w_train = _recency_weights(X_train.shape[0])
 
     scaler = StandardScaler().fit(X_train)
     X_train_s = scaler.transform(X_train)
     X_test_s = scaler.transform(X_test)
 
-    # Three models.
+    # Three models. Hyper-parameters are deliberately MORE regularised than
+    # a naive fit: shallower trees, larger leaves, decorrelated RF splits
+    # (max_features="sqrt"), stochastic gradient boosting (subsample<1) and
+    # an L2-penalised MLP. The baseline pipeline overfit hard on some
+    # symbols (OOS R² as low as −4); regularisation pulls those back toward
+    # the honest coin-flip baseline instead of confidently-wrong.
     rf = RandomForestRegressor(
-        n_estimators=200, max_depth=8, min_samples_leaf=4,
+        n_estimators=300, max_depth=5, min_samples_leaf=10,
+        max_features="sqrt",
         n_jobs=int(os.getenv("ML_THREADS", "1")), random_state=42,
     )
     gbm = GradientBoostingRegressor(
-        n_estimators=200, max_depth=4, learning_rate=0.04,
-        min_samples_leaf=4, random_state=42,
+        n_estimators=150, max_depth=3, learning_rate=0.03,
+        min_samples_leaf=20, subsample=0.7, random_state=42,
     )
     mlp = MLPRegressor(
-        hidden_layer_sizes=(48, 24), max_iter=300, early_stopping=True,
-        learning_rate_init=0.005, random_state=42,
+        hidden_layer_sizes=(32, 16), alpha=1e-3, max_iter=400,
+        early_stopping=True, learning_rate_init=0.003, random_state=42,
     )
 
-    rf.fit(X_train, y_train)        # tree models don't need scaling
-    gbm.fit(X_train, y_train)
-    mlp.fit(X_train_s, y_train)
+    rf.fit(X_train, y_train, sample_weight=w_train)   # trees don't need scaling
+    gbm.fit(X_train, y_train, sample_weight=w_train)
+    mlp.fit(X_train_s, y_train)                        # MLP: no sample_weight API
 
     def ensemble_predict(Xa: np.ndarray, Xs: np.ndarray) -> np.ndarray:
         return (rf.predict(Xa) + gbm.predict(Xa) + mlp.predict(Xs)) / 3.0
@@ -419,9 +448,14 @@ def train_symbol(symbol: str, candles: List[dict], horizon: int = 5) -> dict:
     brier_score = 0.25
     log_loss_holdout = 0.693
     if can_calibrate:
+        # The classifier feeds the UI confidence and the composer's ML vote,
+        # so its probability CALIBRATION matters as much as its direction
+        # call. Recency-weighting the base estimator while calibrating on an
+        # unweighted block hurts calibration, so the classifier trains
+        # unweighted; we only add mild stochastic-boosting variance control.
         gb_clf = GradientBoostingClassifier(
             n_estimators=200, max_depth=3, learning_rate=0.05,
-            min_samples_leaf=8, random_state=42,
+            min_samples_leaf=12, subsample=0.8, random_state=42,
         )
         gb_clf.fit(X_train, y_train_cls)
         # Isotonic calibration is non-parametric and overfits when the
@@ -429,7 +463,9 @@ def train_symbol(symbol: str, candles: List[dict], horizon: int = 5) -> dict:
         # probabilities to near-0/near-1 which then blow up LogLoss on a
         # single misclassification. Sigmoid (Platt) is a parametric
         # 2-parameter fit, far more stable when calibration data is scarce.
-        calibration_method = "isotonic" if X_cal.shape[0] >= 150 else "sigmoid"
+        # Isotonic needs a lot of calibration data to not overfit; with the
+        # purged ~15% block (often <300 rows) sigmoid is the stabler choice.
+        calibration_method = "isotonic" if X_cal.shape[0] >= 300 else "sigmoid"
         # Pre-fit the base classifier on train, then calibrate on the held-out
         # block. sklearn ≥ 1.6 requires the `FrozenEstimator` wrapper; older
         # versions accept cv="prefit".
@@ -481,7 +517,10 @@ def train_symbol(symbol: str, candles: List[dict], horizon: int = 5) -> dict:
     if X_train.shape[0] >= 60:
         tss = TimeSeriesSplit(n_splits=5)
         for fold_train, fold_test in tss.split(X_train):
-            rf_cv = RandomForestRegressor(n_estimators=100, max_depth=6, n_jobs=1, random_state=42)
+            rf_cv = RandomForestRegressor(
+                n_estimators=150, max_depth=5, min_samples_leaf=10,
+                max_features="sqrt", n_jobs=1, random_state=42,
+            )
             rf_cv.fit(X_train[fold_train], y_train[fold_train])
             pred = rf_cv.predict(X_train[fold_test])
             cv_scores.append(r2(y_train[fold_test], pred))
