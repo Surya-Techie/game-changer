@@ -11,6 +11,7 @@ change actually helps out of sample, not just in sample.
 
 from __future__ import annotations
 
+import os
 import statistics
 import sys
 
@@ -24,9 +25,16 @@ SYMBOLS = [
     "BHARTIARTL.NS", "MARUTI.NS",
 ]
 
+# Configurable so the SAME pipeline can be evaluated on daily vs intraday
+# bars / different horizons — the honest way to test the "better data"
+# hypothesis. Defaults reproduce the 5y-daily baseline.
+INTERVAL = os.getenv("EVAL_INTERVAL", "1d")
+PERIOD = os.getenv("EVAL_PERIOD", "5y")
+HORIZON = int(os.getenv("EVAL_HORIZON", "5"))
 
-def fetch(symbol: str, period: str = "5y") -> list[dict]:
-    df = yf.Ticker(symbol).history(period=period, interval="1d")
+
+def fetch(symbol: str, period: str = PERIOD, interval: str = INTERVAL) -> list[dict]:
+    df = yf.Ticker(symbol).history(period=period, interval=interval)
     if df.empty:
         return []
     return [
@@ -39,14 +47,14 @@ def fetch(symbol: str, period: str = "5y") -> list[dict]:
 def main() -> None:
     rows = []
     print("=" * 86)
-    print(" ML pipeline — out-of-sample evaluation (5y daily, walk-forward holdout)")
+    print(f" ML pipeline — OOS evaluation ({PERIOD} {INTERVAL} bars, horizon={HORIZON}, walk-forward)")
     print("=" * 86)
     for sym in SYMBOLS:
         candles = fetch(sym)
         if len(candles) < 200:
             print(f"{sym:<14} skip ({len(candles)} candles)")
             continue
-        m = train_symbol(sym.replace(".NS", ""), candles, horizon=5)
+        m = train_symbol(sym.replace(".NS", ""), candles, horizon=HORIZON)
         if "error" in m:
             print(f"{sym:<14} {m['error']}")
             continue

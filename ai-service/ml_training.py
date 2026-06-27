@@ -74,6 +74,16 @@ FEATURE_NAMES = [
 ]
 N_FEATURES = len(FEATURE_NAMES)
 
+# Measured negative result (kept as a guardrail for the next person):
+# microstructure proxies — close-in-range position, inter-bar gap, and
+# volume-z signed by return — were added and OOS-evaluated on 5m/2-bar
+# data across 12 NSE large-caps. They did NOT improve direction accuracy
+# (52.9% -> 52.6%) or Brier, so they were removed. Price/volume features
+# alone sit at ~50-53% directional accuracy at every timeframe tested;
+# real edge needs richer data (cross-sectional, news, order book), not
+# more derived price features. Re-measure with _eval_models.py before
+# re-adding anything here.
+
 
 def _recency_weights(n: int, half_life: float = 250.0) -> np.ndarray:
     """Exponential-decay sample weights — most recent bar = 1.0, decaying
@@ -565,6 +575,11 @@ def predict_with_trained(symbol: str, candles: List[dict]) -> dict:
     X, _y, _t, vol_scalers = build_features(candles)
     if X.shape[0] == 0:
         return {"ready": False, "reason": "not enough history to predict"}
+    # Guard against a stale model trained with a different feature set
+    # (e.g. before microstructure features were added). Report it cleanly
+    # so the caller retrains, rather than crashing on a shape mismatch.
+    if X.shape[1] != model.n_features:
+        return {"ready": False, "reason": "feature set changed — retrain via /ml/train"}
     x_last = X[-1:].copy()
     x_last_s = model.scaler.transform(x_last)
     # Each model returns a VOL-SCALED log-return (target was log_ret/vol_20
