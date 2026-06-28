@@ -56,6 +56,7 @@ export interface PositionEvent {
 
 export interface PortfolioEvent {
   userId: string;
+  capital: number;
   equity: number;
   realisedPnl: number;
   unrealisedPnl: number;

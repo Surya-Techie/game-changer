@@ -1,6 +1,7 @@
 import { Position } from "../models/Position.js";
 import { Trade } from "../models/Trade.js";
 import { AccountState } from "../models/AccountState.js";
+import { User } from "../models/User.js";
 import { bus } from "./eventBus.js";
 import { paperBroker } from "./paperBroker.js";
 import { priceBook } from "./priceBook.js";
@@ -243,9 +244,15 @@ class PositionManager {
       if (px == null) continue;
       unrealised += p.side === "LONG" ? (px - p.entryPrice) * p.qty : (p.entryPrice - px) * p.qty;
     }
+    // Equity is the CAPITAL BASE plus realised + unrealised P&L — not the
+    // P&L alone (that bug showed a negative equity on the dashboard). Match
+    // the REST /api/portfolio default of 100k when no User capital is set.
+    const user = await User.findById(userId).select("capital").lean();
+    const capital = user?.capital ?? 100_000;
     bus.emit("portfolio", {
       userId,
-      equity: round2(state.realisedPnl + unrealised),
+      capital,
+      equity: round2(capital + state.realisedPnl + unrealised),
       realisedPnl: round2(state.realisedPnl),
       unrealisedPnl: round2(unrealised),
       dailyPnl: round2(state.dailyPnl),

@@ -1,6 +1,8 @@
 import type { Server } from "node:http";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { verifyToken, type JwtPayload } from "../utils/jwt.js";
+import { DEV_USER } from "../middleware/auth.js";
+import { env } from "../config/env.js";
 import { mockFeed } from "../services/mockFeed.js";
 import { candleAggregator } from "../services/candleAggregator.js";
 import { bus } from "../services/eventBus.js";
@@ -25,12 +27,21 @@ export function attachWebSocket(server: Server) {
   wss.on("connection", (ws, req) => {
     const url = new URL(req.url ?? "/ws", "http://localhost");
     const token = url.searchParams.get("token");
-    if (!token) return ws.close(4001, "Missing token");
+    // When auth is disabled (login UI removed), accept tokenless / invalid
+    // connections as the shared DEV_USER so they receive that account's
+    // order/position/portfolio broadcasts. Production still requires a
+    // valid token.
     let user: JwtPayload;
-    try {
-      user = verifyToken(token);
-    } catch {
-      return ws.close(4001, "Invalid token");
+    if (token && token !== "null" && token !== "undefined") {
+      try {
+        user = verifyToken(token);
+      } catch {
+        if (!env.authDisabled) return ws.close(4001, "Invalid token");
+        user = DEV_USER;
+      }
+    } else {
+      if (!env.authDisabled) return ws.close(4001, "Missing token");
+      user = DEV_USER;
     }
 
     const client: Client = { ws, user, subs: new Set(), isAdmin: false };

@@ -116,16 +116,9 @@ async function fireAlert(alert: any, observed: number | undefined) {
   alert.lastTriggeredValue = observed;
   alert.history = [{ ts: new Date(), value: observed }, ...(alert.history ?? [])].slice(0, 20);
   await alert.save();
-  bus.emit("portfolio", {
-    userId: String(alert.userId),
-    equity: 0,
-    realisedPnl: 0,
-    unrealisedPnl: 0,
-    dailyPnl: 0,
-    openPositions: 0,
-    // (kept to silence the type — actual alert payload is broadcast below)
-  });
   // Custom event for alert UI — piggyback on the position channel via a tag.
+  // (We deliberately do NOT emit a "portfolio" event here — an alert firing
+  // must not overwrite the dashboard's equity/P&L with zeros.)
   bus.emit("position", {
     userId: String(alert.userId),
     positionId: `alert:${alert._id}`,

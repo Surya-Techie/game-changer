@@ -78,7 +78,9 @@ export function useMarketSocket({ token, symbols, onEvent }: Options) {
   symbolsRef.current = symbols;
 
   useEffect(() => {
-    if (!token) return;
+    // Auth is disabled (login removed), so `token` is null — connect anyway;
+    // the backend accepts the dev user without a token. Append the token
+    // only when one exists (future login restore stays compatible).
     let cancelled = false;
     let retryTimer: number | undefined;
     let heartbeatTimer: number | undefined;
@@ -87,7 +89,8 @@ export function useMarketSocket({ token, symbols, onEvent }: Options) {
     function connect() {
       if (cancelled) return;
       setStatus("connecting");
-      const ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent(token!)}`);
+      const url = token ? `${WS_URL}?token=${encodeURIComponent(token)}` : WS_URL;
+      const ws = new WebSocket(url);
       wsRef.current = ws;
 
       ws.onopen = () => {

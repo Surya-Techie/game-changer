@@ -148,7 +148,8 @@ export default function DashboardPage() {
   // the user starts the backend the dashboard fills itself in without
   // requiring a page reload.
   useEffect(() => {
-    if (!token) return;
+    // Auth is disabled (login removed), so `token` is null — load anyway.
+    // The backend serves the dev account for un-authenticated requests.
     let aborted = false;
     let retryTimer: number | undefined;
     let portfolioOk = false;
