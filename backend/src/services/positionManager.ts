@@ -83,8 +83,12 @@ class PositionManager {
           }
         }
         if (reason) {
+          // Fill at the trigger level (stop for SL/TRAIL, target for TP) so a
+          // gapped synthetic tick doesn't book a loss far beyond the stop.
+          const triggerPrice =
+            reason === "TP" ? pos.targetPrice ?? undefined : pos.stopPrice ?? undefined;
           this.busy.add(id);
-          await this.closePosition(id, reason);
+          await this.closePosition(id, reason, triggerPrice);
           this.busy.delete(id);
         }
       } catch (err) {
@@ -166,17 +170,24 @@ class PositionManager {
     });
   }
 
-  async closePosition(positionId: string, reason: "SL" | "TP" | "TRAIL" | "MANUAL" | "FLIP") {
+  async closePosition(
+    positionId: string,
+    reason: "SL" | "TP" | "TRAIL" | "MANUAL" | "FLIP",
+    fillPrice?: number,
+  ) {
     const pos = await Position.findOne({ _id: positionId, status: "OPEN" });
     if (!pos) return null;
 
     const exitSide = pos.side === "LONG" ? "SELL" : "BUY";
+    // For stop/target/trail exits the caller passes the trigger level so the
+    // fill happens AT the stop/target, not at a gapped tick price.
     const { filledPrice } = await paperBroker.submitMarket({
       userId: String(pos.userId),
       symbol: pos.symbol,
       side: exitSide,
       qty: pos.qty,
       source: "AUTO",
+      fillPrice,
     });
 
     const pnl =
