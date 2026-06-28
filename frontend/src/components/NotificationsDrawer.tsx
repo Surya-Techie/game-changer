@@ -4,7 +4,7 @@ import clsx from "clsx";
 export interface Notification {
   id: string;
   ts: number;
-  type: "signal" | "fill" | "exit" | "system";
+  type: "signal" | "fill" | "exit" | "alert" | "system";
   title: string;
   body?: string;
   symbol?: string;

@@ -104,6 +104,9 @@ export default function DashboardPage() {
   // Pattern engine state: per-symbol list of live patterns (capped at 25 each).
   const [patternsBySymbol, setPatternsBySymbol] = useState<Record<string, WsPatternPayload[]>>({});
   const patternToasts = usePatternToasts();
+  // User notification on/off prefs (signal/fill/exit/alert/system). A ref so
+  // the WS callback always reads the latest without re-subscribing.
+  const notifPrefsRef = useRef<Record<string, boolean>>({});
 
   // Initialise the pattern-overlay re-attach hook once. Idempotent.
   useEffect(() => { initPatternOverlay(); }, []);
@@ -173,6 +176,7 @@ export default function DashboardPage() {
           autoTradeMode: p.autoTradeMode,
           killSwitch: p.killSwitch,
         });
+        notifPrefsRef.current = (p.notificationPrefs ?? {}) as Record<string, boolean>;
         portfolioOk = true;
       }
       if (psRes.status === "fulfilled") {
@@ -359,14 +363,17 @@ export default function DashboardPage() {
       }
       if (ev.type === "order") {
         const o = (ev as unknown as { order: { symbol: string; side: string; qty: number; filledPrice?: number; status: string } }).order;
-        if (o.status === "FILLED") {
+        // FILLED orders are NOT notified here — the position OPEN/CLOSED
+        // event below covers them (this previously double-notified). Only
+        // surface rejections, which the position events don't cover.
+        if (o.status === "REJECTED") {
           pushNotification({
-            id: `order-${o.symbol}-${Date.now()}`,
+            id: `order-rej-${o.symbol}-${Date.now()}`,
             ts: Date.now(),
-            type: "fill",
+            type: "system",
             symbol: o.symbol,
-            title: `${o.side} ${o.qty} ${o.symbol} filled @ ${o.filledPrice?.toFixed(2) ?? "?"}`,
-            tone: o.side === "BUY" ? "buy" : "sell",
+            title: `Order rejected · ${o.side} ${o.qty} ${o.symbol}`,
+            tone: "muted",
           });
         }
         return;
@@ -410,6 +417,19 @@ export default function DashboardPage() {
           ...p,
         }));
       }
+      if (ev.type === "alert") {
+        const a = (ev as unknown as { alert: { symbol: string; alertType: string; message: string } }).alert;
+        pushNotification({
+          id: `alert-${a.symbol}-${Date.now()}`,
+          ts: Date.now(),
+          type: "alert",
+          symbol: a.symbol,
+          title: `Alert · ${a.symbol}`,
+          body: a.message,
+          tone: "info",
+        });
+        return;
+      }
       if (ev.type === "pattern" || ev.type === "pattern_signal") {
         const payload = ev.pattern as WsPatternPayload | WsPatternSignalPayload;
         const sym = payload.symbol.toUpperCase();
@@ -432,7 +452,7 @@ export default function DashboardPage() {
         pushNotification({
           id: `train-${prog.job_id}-${prog.percent}`,
           ts: Date.now(),
-          type: "signal",
+          type: "system",
           symbol: "",
           title: `Pattern training ${prog.status}`,
           body: `${prog.message || "—"} (${prog.percent}%)`,
@@ -444,6 +464,9 @@ export default function DashboardPage() {
   });
 
   function pushNotification(n: Notification) {
+    // Respect the user's per-kind notification prefs (default on). The
+    // notification `type` maps 1:1 onto the pref kinds.
+    if (notifPrefsRef.current[n.type] === false) return;
     setNotifications((curr) => [n, ...curr].slice(0, 50));
   }
 

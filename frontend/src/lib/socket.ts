@@ -53,6 +53,7 @@ export type WsEvent =
   | { type: "order"; order: Record<string, unknown> }
   | { type: "position"; position: Record<string, unknown> }
   | { type: "portfolio"; portfolio: Record<string, unknown> }
+  | { type: "alert"; alert: Record<string, unknown> }
   | { type: "paper"; ts: number; event: Record<string, unknown> }
   | { type: "pattern"; pattern: WsPatternPayload }
   | { type: "pattern_signal"; pattern: WsPatternSignalPayload }

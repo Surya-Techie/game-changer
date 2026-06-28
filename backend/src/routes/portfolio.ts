@@ -45,6 +45,7 @@ router.get("/", async (req, res, next) => {
       maxOpenPositions: state.maxOpenPositions,
       riskPerTradePct: state.riskPerTradePct,
       maxDailyLossPct: state.maxDailyLossPct,
+      notificationPrefs: state.notificationPrefs ?? {},
     });
   } catch (err) {
     next(err);

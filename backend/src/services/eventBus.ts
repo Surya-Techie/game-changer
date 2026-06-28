@@ -118,12 +118,25 @@ export interface PatternTrainingProgressEvent {
   error?: string;
 }
 
+/** A user-facing alert firing (price/indicator condition met). Its own
+ * channel so the UI shows a proper alert notification instead of a fake
+ * qty-0 position. */
+export interface AlertEvent {
+  userId: string;
+  alertId: string;
+  symbol: string;
+  alertType: string;        // e.g. PRICE_ABOVE, INDICATOR_FORMULA
+  value?: number;           // the observed value that triggered it
+  message: string;
+}
+
 type Events = {
   tick: (t: Tick) => void;
   signal: (s: SignalEvent) => void;
   order: (o: OrderEvent) => void;
   position: (p: PositionEvent) => void;
   portfolio: (p: PortfolioEvent) => void;
+  alert: (a: AlertEvent) => void;
   paper: (e: PaperEventEnvelope) => void;
   pattern: (p: PatternEvent) => void;
   pattern_signal: (p: PatternSignalEvent) => void;

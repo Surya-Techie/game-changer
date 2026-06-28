@@ -97,6 +97,7 @@ export function attachWebSocket(server: Server) {
   bus.on("order", (ev) => sendToUser(ev.userId, { type: "order", order: ev }));
   bus.on("position", (ev) => sendToUser(ev.userId, { type: "position", position: ev }));
   bus.on("portfolio", (ev) => sendToUser(ev.userId, { type: "portfolio", portfolio: ev }));
+  bus.on("alert", (ev) => sendToUser(ev.userId, { type: "alert", alert: ev }));
   // Paper trading: single channel, kind-discriminated payload.
   bus.on("paper", (env) =>
     sendToUser(env.userId, { type: "paper", ts: env.ts, event: env.event })

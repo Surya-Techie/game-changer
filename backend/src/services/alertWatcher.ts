@@ -116,19 +116,19 @@ async function fireAlert(alert: any, observed: number | undefined) {
   alert.lastTriggeredValue = observed;
   alert.history = [{ ts: new Date(), value: observed }, ...(alert.history ?? [])].slice(0, 20);
   await alert.save();
-  // Custom event for alert UI — piggyback on the position channel via a tag.
-  // (We deliberately do NOT emit a "portfolio" event here — an alert firing
-  // must not overwrite the dashboard's equity/P&L with zeros.)
-  bus.emit("position", {
+  // Dedicated alert channel — NOT a piggyback on "position" (which injected
+  // a phantom qty-0 position and a bogus "Opened ×0" notification) and NOT a
+  // "portfolio" emit (which would zero the dashboard equity).
+  bus.emit("alert", {
     userId: String(alert.userId),
-    positionId: `alert:${alert._id}`,
-    symbol: alert.symbol,
-    side: "LONG",
-    qty: 0,
-    entryPrice: observed ?? 0,
-    status: "OPEN",
-    exitReason: `ALERT:${alert.type}`,
-    realisedPnl: 0,
+    alertId: String(alert._id),
+    symbol: String(alert.symbol),
+    alertType: String(alert.type),
+    value: observed,
+    message:
+      observed != null
+        ? `${alert.symbol} ${alert.type} triggered at ${observed}`
+        : `${alert.symbol} ${alert.type} triggered`,
   });
   logger.info("Alert fired", { id: String(alert._id), symbol: alert.symbol, type: alert.type, observed });
 }
