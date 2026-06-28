@@ -86,6 +86,7 @@ class MockFeed extends EventEmitter {
   private timer?: NodeJS.Timeout;
   private realTimer?: NodeJS.Timeout;
   private running = false;
+  private synthetic = false;
   // Wall-clock of the last successful NSE batch. We use it to suppress
   // synthetic ticks while a real feed is flowing — otherwise consumers
   // would see real + fake mixed together on the same symbol.
@@ -117,11 +118,18 @@ class MockFeed extends EventEmitter {
     if (this.running) return;
     this.running = true;
     logger.info("MockFeed started", { symbols: this.symbols().length });
-    // The synthetic random-walk emitter is DISABLED — the user wants
-    // honest data only. During market hours pollReal() emits real
-    // yfinance ticks; outside market hours the last real close is
-    // shown frozen rather than a wandering fake one.
-    // (The `step()` function is kept for tests; nothing calls it now.)
+    // By default the synthetic random-walk emitter is OFF — production wants
+    // honest data only: during market hours pollReal() emits real yfinance
+    // ticks, and outside market hours the last real close is shown frozen.
+    //
+    // MOCK_FEED_SYNTHETIC=true (dev.sh) re-enables the walk so prices MOVE
+    // around the clock — required to actually exercise the auto-trade loop
+    // end-to-end (open → stop/target hit → exit → trade) when NSE is closed.
+    this.synthetic = (process.env.MOCK_FEED_SYNTHETIC ?? "false").toLowerCase() === "true";
+    if (this.synthetic) {
+      logger.info("MockFeed synthetic walk ENABLED (dev)", { intervalMs: _intervalMs });
+      this.timer = setInterval(() => this.step(), _intervalMs);
+    }
 
     // Single poller. Polls every 2 s during market hours, every 60 s
     // outside (last-close prices don't move, so frequent polls waste API).
@@ -161,7 +169,13 @@ class MockFeed extends EventEmitter {
     for (const state of this.states.values()) {
       const z = randn();
       const meanReversion = (state.anchor - state.price) / state.anchor; // pulls toward anchor
-      const pctChange = 0.05 * meanReversion + state.volatility * z;
+      // Dev synthetic mode amplifies per-step volatility so prices travel
+      // far enough to hit stops/targets in an observable window — but kept
+      // modest so single steps don't gap violently through stops (which
+      // would inflate slippage and trip the daily-loss kill switch in
+      // seconds). Light mean-reversion lets trends run toward targets too.
+      const SYNTH_VOL_MULT = 4;
+      const pctChange = 0.02 * meanReversion + state.volatility * SYNTH_VOL_MULT * z;
       const newPrice = Math.max(0.01, state.price * (1 + pctChange));
       state.price = round2(newPrice);
 

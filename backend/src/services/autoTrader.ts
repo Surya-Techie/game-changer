@@ -8,6 +8,17 @@ import { broker } from "./brokers/registry.js";
 import { isMarketOpen } from "./paper/marketHours.js";
 import { logger } from "../utils/logger.js";
 
+/**
+ * AUTOTRADE_REQUIRE_MARKET — default "true". Set "false" (dev.sh does) so the
+ * auto-trade loop executes against the mock feed even when NSE is closed,
+ * instead of queueing every order until the next open. Mirrors the
+ * patternEngine's PATTERN_ENGINE_REQUIRE_MARKET dev switch. Production keeps
+ * the default and only trades during market hours.
+ */
+function requireMarketOpen(): boolean {
+  return (process.env.AUTOTRADE_REQUIRE_MARKET ?? "true").toLowerCase() === "true";
+}
+
 class AutoTrader {
   // Track market-open transitions so we only flush the queue once per open.
   private wasOpen = false;
@@ -143,8 +154,9 @@ class AutoTrader {
     // Stash a PENDING order so the next-day scan can re-emit / execute it.
     // Mock-broker mode does its execution synchronously and needs the
     // market clock; live (Kite) sessions accept queued orders directly so
-    // we let them pass through.
-    if (broker().mode === "mock" && !isMarketOpen()) {
+    // we let them pass through. When AUTOTRADE_REQUIRE_MARKET=false (dev),
+    // we skip the queue and execute against the mock feed immediately.
+    if (broker().mode === "mock" && requireMarketOpen() && !isMarketOpen()) {
       await Order.create({
         userId,
         symbol: sig.symbol,
