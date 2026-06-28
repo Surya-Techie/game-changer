@@ -11,11 +11,79 @@ import { logger } from "../utils/logger.js";
 class PositionManager {
   private busy = new Set<string>();
 
+  private flattening = new Set<string>();
+  private riskTimer?: NodeJS.Timeout;
+
   start() {
     bus.on("tick", (tick) => {
       void this.onTick(tick.symbol, tick.price);
     });
+    // Continuous daily-loss guard: every 2s, check each account with open
+    // positions against its daily-loss cap (realised + unrealised) and
+    // flatten if breached — catches positions bleeding unrealised that
+    // haven't hit a stop yet.
+    this.riskTimer = setInterval(() => {
+      void this.checkAllDailyLossLimits().catch((err) =>
+        logger.warn("daily-loss guard failed", { err: (err as Error).message })
+      );
+    }, 2_000);
     logger.info("PositionManager started");
+  }
+
+  stop() {
+    if (this.riskTimer) clearInterval(this.riskTimer);
+    this.riskTimer = undefined;
+  }
+
+  private async checkAllDailyLossLimits() {
+    const userIds = await Position.distinct("userId", { status: "OPEN" });
+    for (const uid of userIds) {
+      await this.enforceDailyLossLimit(String(uid));
+    }
+  }
+
+  /**
+   * If the day's loss (realised + open unrealised) has breached the
+   * account's maxDailyLossPct cap, engage the kill switch AND flatten every
+   * open position at market. Without this, the kill switch only blocks NEW
+   * positions while already-open ones keep bleeding past the limit.
+   */
+  private async enforceDailyLossLimit(userId: string): Promise<void> {
+    if (this.flattening.has(userId)) return;
+    const open = await Position.find({ userId, status: "OPEN" });
+    if (open.length === 0) return;
+    const state = await getOrCreateAccountState(userId);
+    const user = await User.findById(userId).select("capital").lean();
+    const capital = user?.capital ?? 100_000;
+    const cap = (capital * state.maxDailyLossPct) / 100;
+
+    let unrealised = 0;
+    for (const p of open) {
+      const px = priceBook.price(p.symbol);
+      if (px == null) continue;
+      unrealised += p.side === "LONG" ? (px - p.entryPrice) * p.qty : (p.entryPrice - px) * p.qty;
+    }
+    const dayLoss = state.dailyPnl + unrealised;
+    if (dayLoss > -cap) return; // within the limit
+
+    if (!state.killSwitch) {
+      state.killSwitch = true;
+      await state.save();
+    }
+    logger.warn("Daily loss limit breached — flattening open positions", {
+      userId,
+      dayLoss: round2(dayLoss),
+      cap: round2(-cap),
+      openPositions: open.length,
+    });
+    this.flattening.add(userId);
+    try {
+      for (const p of open) {
+        await this.closePosition(String(p._id), "RISK");
+      }
+    } finally {
+      this.flattening.delete(userId);
+    }
   }
 
   private async onTick(symbol: string, price: number) {
@@ -172,7 +240,7 @@ class PositionManager {
 
   async closePosition(
     positionId: string,
-    reason: "SL" | "TP" | "TRAIL" | "MANUAL" | "FLIP",
+    reason: "SL" | "TP" | "TRAIL" | "MANUAL" | "FLIP" | "RISK",
     fillPrice?: number,
   ) {
     const pos = await Position.findOne({ _id: positionId, status: "OPEN" });
@@ -242,6 +310,13 @@ class PositionManager {
       reason,
       pnl: round2(pnl),
     });
+
+    // Immediately re-check the daily-loss cap so a losing close flattens the
+    // remaining positions before they can resolve past the limit too. RISK
+    // (we're already flattening) and FLIP (immediately re-entered) are skipped.
+    if (reason !== "RISK" && reason !== "FLIP") {
+      await this.enforceDailyLossLimit(String(pos.userId));
+    }
 
     return pos;
   }
