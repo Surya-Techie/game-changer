@@ -67,8 +67,13 @@ def test_unmapped_pattern_is_ignored():
 
 
 def test_pattern_name_map_covers_all_ids():
-    for pid in ("symmetrical_triangle", "ascending_triangle", "descending_triangle",
-                "head_shoulders_continuation", "double_bottom", "double_top"):
+    # symmetrical_triangle was removed (loose geometry fired on everything);
+    # the India setups + Supertrend replaced it.
+    for pid in ("ascending_triangle", "descending_triangle",
+                "head_shoulders_continuation", "double_bottom", "double_top",
+                "orb_breakout", "orb_breakdown", "pdh_breakout", "pdl_breakdown",
+                "vwap_reclaim", "vwap_reject",
+                "supertrend_flip_bull", "supertrend_flip_bear"):
         assert pid in pps.PPS_PATTERN_NAMES
 
 

@@ -1213,6 +1213,14 @@ function prettyPattern(p: string): string {
     horizontal_channel:        "H-Channel",
     bullish_island_reversal:   "Bull Island",
     bearish_island_reversal:   "Bear Island",
+    orb_breakout:              "ORB Break ↑",
+    orb_breakdown:             "ORB Break ↓",
+    pdh_breakout:              "PDH Break",
+    pdl_breakdown:             "PDL Break",
+    vwap_reclaim:              "VWAP Reclaim",
+    vwap_reject:               "VWAP Reject",
+    supertrend_flip_bull:      "Supertrend ↑",
+    supertrend_flip_bear:      "Supertrend ↓",
   };
   return map[p] ?? p.split("_").map((s) => s[0].toUpperCase() + s.slice(1)).join(" ");
 }

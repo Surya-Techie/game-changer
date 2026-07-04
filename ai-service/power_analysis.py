@@ -700,7 +700,8 @@ def run_power_analysis(
     # Pre-compute PPS once over the entire series — it's O(n) and saves
     # a lot of work in the per-bar loop.
     pps_bars = [
-        {"date": "", "open": float(c["o"]), "high": float(c["h"]),
+        {"date": "", "t": int(c["t"]),   # t → session features (ORB/PDH/VWAP)
+         "open": float(c["o"]), "high": float(c["h"]),
          "low": float(c["l"]), "close": float(c["c"]), "volume": float(c.get("v", 0) or 0)}
         for c in candles
     ]
