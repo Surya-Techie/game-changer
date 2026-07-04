@@ -98,6 +98,8 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
   // flight (1m timeframe). Queue at most one follow-up run.
   const analysingRef = useRef(false);
   const rerunQueuedRef = useRef(false);
+  // One free automatic retry for a failed silent (auto) run per load.
+  const autoRetriedRef = useRef(false);
   const token = useAuth((s) => s.token);
   // Candlestick patterns overlay — Hammer / Doji / Engulfing / Morning
   // Star / etc. Each detected pattern bar gets a marker labelled with
@@ -287,6 +289,17 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
         chartRef.current?.timeScale().fitContent();
         plotIndicators(ohlcv.candles);
 
+        // Kick the POWER analysis IMMEDIATELY — in parallel with the
+        // pattern-overlay fetches below, not after them. The page's whole
+        // job is "open it and the verdict appears"; serialising behind
+        // two overlay calls added seconds to the first signal for no
+        // reason. Silent mode: no chart-freezing overlay.
+        if (!aborted && clean.length >= 80) {
+          void runPower(true);
+        } else if (!aborted && clean.length > 0) {
+          setError(`Only ${clean.length} ${timeframe} bars available — need ≥ 80 for a verdict. Try a smaller timeframe.`);
+        }
+
         // Fetch candlestick patterns (Hammer / Doji / Engulfing / …)
         // alongside the OHLCV so they're ready as soon as the chart
         // mounts — no need to wait for the Run Power Analysis click.
@@ -334,12 +347,6 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
           if (!aborted) setChartPatterns([]);
         }
 
-        // Auto-run the analysis as soon as candles are in — the panel's
-        // job is to SHOW the current signal, not to wait for a click.
-        // Silent mode: no loading overlay, the chart stays interactive.
-        if (!aborted && clean.length >= 80) {
-          void runPower(true);
-        }
       } finally {
         if (!aborted) setLoadingOhlcv(false);
       }
@@ -468,11 +475,19 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
         targetPct: useFixedRisk ? targetPct : undefined,
       });
       if (!res) {
+        // One automatic retry before bothering the user — a transient
+        // hiccup on page-open shouldn't require a manual click.
+        if (silent && !autoRetriedRef.current) {
+          autoRetriedRef.current = true;
+          window.setTimeout(() => { void runPower(true); }, 4_000);
+          return;
+        }
         // Surface the failure on silent runs too — swallowing it left the
         // panel stuck on dashes with no arrows and no explanation.
         setError("Power Analysis failed or timed out — click ⚡ Run Power Analysis to retry.");
         return;
       }
+      autoRetriedRef.current = false;
       setSignals(res.signals);
       setSummary(res.summary);
       setAccuracy(res.accuracy ?? null);
@@ -1013,6 +1028,17 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
             <span className="text-xs text-slate-400 animate-pulse">
               {loadingOhlcv ? "Loading candles…" : "Running super-composer…"}
             </span>
+          </div>
+        )}
+        {/* First-load auto-analysis progress — the page runs everything on
+            open, so make that visibly true instead of silent dashes. */}
+        {analysing && !running && !loadingOhlcv && !summary && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+            <div className="px-3 py-1.5 rounded-md bg-amber-500/15 border border-amber-500/40 backdrop-blur-sm">
+              <span className="text-[11px] font-semibold tracking-wider text-amber-200 animate-pulse">
+                ⚡ Running POWER analysis…
+              </span>
+            </div>
           </div>
         )}
         {error && !loadingOhlcv && !running && (
