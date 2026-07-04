@@ -12,12 +12,12 @@ const SYMBOLS = [
 ];
 
 const TFS = ["M5", "M15", "H1", "D1"] as const;
-const DIRS = ["bullish", "bearish", "continuation", "neutral"] as const;
-const GRADES = ["A+", "A", "B", "C"] as const;
+type Direction = "bullish" | "bearish" | "continuation" | "neutral";
+type Grade = "A+" | "A" | "B" | "C";
 
 interface PatternSpec {
   name: string;
-  direction: typeof DIRS[number];
+  direction: Direction;
   category: string;
   // Bias toward win/loss to give the leaderboard a real ranking.
   winBias: number;
@@ -63,7 +63,7 @@ function mulberry32(seed: number) {
   };
 }
 
-function gradeFor(confidence: number): typeof GRADES[number] {
+function gradeFor(confidence: number): Grade {
   if (confidence >= 90) return "A+";
   if (confidence >= 80) return "A";
   if (confidence >= 65) return "B";

@@ -1,3 +1,4 @@
+import { SymbolPicker } from "../components/SymbolSearchInput";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -9,6 +10,7 @@ import {
 } from "lightweight-charts";
 import clsx from "clsx";
 import { api } from "../lib/api";
+import { apiErrorMessage } from "../lib/errors";
 
 // ============================ types ===========================================
 
@@ -120,15 +122,15 @@ export default function BacktestPage() {
       }
       if (mode === "baseline") setBaseline(data as BacktestResult);
       else setResult(data as BacktestResult);
-    } catch (err: any) {
-      setError(err?.response?.data?.error ?? err.message ?? "Backtest failed");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Backtest failed"));
     } finally {
       setRunning(false);
     }
   }
 
   return (
-    <div className="min-h-screen bg-app-radial text-slate-200">
+    <div className="min-h-full bg-app-radial text-slate-200">
       <header className="border-b border-bg-border bg-bg-panel-solid/60 backdrop-blur-glass px-6 py-4 flex items-center justify-between print:hidden">
         <div>
           <Link to="/" className="text-xs text-slate-500 hover:text-white">← Dashboard</Link>
@@ -171,9 +173,7 @@ export default function BacktestPage() {
         <>
         <section className="bg-bg-panel-solid/70 backdrop-blur-glass border border-bg-border rounded-xl p-5 grid grid-cols-2 md:grid-cols-6 gap-4 items-end print:hidden">
           <Field label="Symbol">
-            <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="input">
-              {SYMBOLS.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            <SymbolPicker value={symbol} onSelect={setSymbol} placeholder="Search any stock…" />
           </Field>
           <Field label="Bars">
             <input type="number" min={100} max={1000} value={bars} onChange={(e) => setBars(Number(e.target.value))} className="input" />
@@ -196,7 +196,7 @@ export default function BacktestPage() {
           <div className="text-sm uppercase tracking-wider text-slate-500 mb-4">Strategy toggles</div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
             <Field label="Stop mode">
-              <select value={stopMode} onChange={(e) => setStopMode(e.target.value as any)} className="input">
+              <select value={stopMode} onChange={(e) => setStopMode(e.target.value as "ATR" | "FIXED_PCT")} className="input">
                 <option value="FIXED_PCT">Fixed %</option>
                 <option value="ATR">ATR</option>
               </select>
@@ -544,9 +544,12 @@ function TradeLog({ trades }: { trades: BacktestTrade[] }) {
     if (filterSide !== "ALL") arr = arr.filter((t) => t.side === filterSide);
     if (filterResult !== "ALL") arr = arr.filter((t) => (filterResult === "W" ? t.pnl > 0 : t.pnl <= 0));
     arr.sort((a, b) => {
-      const av = (a as any)[sortKey];
-      const bv = (b as any)[sortKey];
-      const cmp = typeof av === "string" ? av.localeCompare(bv) : av - bv;
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      const cmp =
+        typeof av === "number" && typeof bv === "number"
+          ? av - bv
+          : String(av).localeCompare(String(bv));
       return sortDir === "asc" ? cmp : -cmp;
     });
     return arr;
@@ -572,12 +575,12 @@ function TradeLog({ trades }: { trades: BacktestTrade[] }) {
       <div className="px-5 py-3 flex items-center justify-between flex-wrap gap-2">
         <div className="text-sm uppercase tracking-wider text-slate-500">Trade log ({filtered.length} of {trades.length})</div>
         <div className="flex items-center gap-2 text-xs">
-          <select value={filterSide} onChange={(e) => setFilterSide(e.target.value as any)} className="bg-bg-elevated border border-bg-border rounded px-2 py-1">
+          <select value={filterSide} onChange={(e) => setFilterSide(e.target.value as "ALL" | "LONG" | "SHORT")} className="bg-bg-elevated border border-bg-border rounded px-2 py-1">
             <option value="ALL">All sides</option>
             <option value="LONG">LONG only</option>
             <option value="SHORT">SHORT only</option>
           </select>
-          <select value={filterResult} onChange={(e) => setFilterResult(e.target.value as any)} className="bg-bg-elevated border border-bg-border rounded px-2 py-1">
+          <select value={filterResult} onChange={(e) => setFilterResult(e.target.value as "ALL" | "W" | "L")} className="bg-bg-elevated border border-bg-border rounded px-2 py-1">
             <option value="ALL">All results</option>
             <option value="W">Wins only</option>
             <option value="L">Losses only</option>
@@ -850,8 +853,8 @@ function PatternBacktestTab() {
         return;
       }
       setResult(data as PatternBacktestResult);
-    } catch (err: any) {
-      setError(err?.response?.data?.error ?? err.message ?? "Backtest failed");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Backtest failed"));
     } finally {
       setRunning(false);
     }
@@ -863,9 +866,7 @@ function PatternBacktestTab() {
         <div className="text-sm uppercase tracking-wider text-slate-500 mb-4">Pattern backtest configuration</div>
         <div className="grid grid-cols-2 md:grid-cols-6 gap-4 items-end">
           <Field label="Symbol">
-            <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="input">
-              {SYMBOLS.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            <SymbolPicker value={symbol} onSelect={setSymbol} placeholder="Search any stock…" />
           </Field>
           <Field label="Start date">
             <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="input" />
@@ -1074,7 +1075,6 @@ function PatternTradeLog({ trades }: { trades: PatternBacktestResult["trade_log"
             </thead>
             <tbody className="divide-y divide-bg-border">
               {trades.map((t, i) => {
-                const win = t.outcome === "win";
                 return (
                   <tr key={i}>
                     <td className="px-3 py-1.5 text-slate-500">{i + 1}</td>

@@ -16,7 +16,7 @@ pull in the `ta` package — those have been audited and tested.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Literal, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 
 from indicators import atr as _atr_series, sma as _sma_series
 
@@ -35,6 +35,25 @@ PatternId = Literal[
     "double_bottom",
     "double_top",
 ]
+
+# Canonical display names so PPS pattern ids line up with the
+# pattern-accuracy store (analytics → PPS enrichment). Once a pattern has
+# enough resolved samples in the store, its MEASURED win rate flows onto
+# live PPS signals via enrich_signals_with_accuracy().
+PPS_PATTERN_NAMES: Dict[str, str] = {
+    "symmetrical_triangle": "Symmetrical Triangle",
+    "ascending_triangle": "Ascending Triangle",
+    "descending_triangle": "Descending Triangle",
+    "head_shoulders_continuation": "Head and Shoulders",
+    "double_bottom": "Double Bottom",
+    "double_top": "Double Top",
+}
+
+# Empirical-Bayes shrinkage constant: at this many measured samples the
+# blended confidence weights the measured win rate and the PPS engine's
+# own confidence equally. Fewer samples → trust the engine; more → trust
+# the measured rate. Keeps a 3-trade fluke from hijacking the signal.
+_ACCURACY_BLEND_K = 20
 
 
 @dataclass
@@ -582,3 +601,125 @@ def summarise(signals: List[dict]) -> dict:
         "sell_count": sell,
         "avg_confidence": round(avg, 3),
     }
+
+
+def enrich_signals_with_accuracy(
+    signals: List[dict],
+    accuracy_by_name: Dict[str, dict],
+) -> List[dict]:
+    """Fold MEASURED pattern win rates (from pattern-analytics) onto live PPS
+    signals — the Analytics → PPS integration.
+
+    accuracy_by_name maps a canonical pattern name to
+    ``{"win_rate": float in [0,1], "samples": int}`` (e.g. built from the
+    pattern_accuracy rollups). For each BUY/SELL signal whose pattern has
+    measured data, we attach:
+      - measured_win_rate   : the empirical win rate for that pattern
+      - measured_samples    : how many resolved trades back it
+      - combined_confidence : PPS confidence shrunk toward the measured rate
+                              by sample count (empirical-Bayes), so the live
+                              signal reflects what actually happened, not just
+                              the engine's prior.
+
+    Degrades gracefully: with no measured data, combined_confidence simply
+    equals the engine's own confidence and measured_win_rate is None.
+    """
+    for s in signals:
+        conf = s.get("confidence")
+        s["measured_win_rate"] = None
+        s["measured_samples"] = 0
+        s["combined_confidence"] = conf
+        if s.get("signal") not in ("BUY", "SELL"):
+            continue
+        name = PPS_PATTERN_NAMES.get(s.get("pattern") or "")
+        rec = accuracy_by_name.get(name) if name else None
+        if not rec:
+            continue
+        try:
+            wr = float(rec["win_rate"])
+            n = int(rec["samples"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if n <= 0:
+            continue
+        w = n / (n + _ACCURACY_BLEND_K)            # 0..1, grows with samples
+        pps_conf = float(conf or 0.0)
+        s["measured_win_rate"] = round(wr, 4)
+        s["measured_samples"] = n
+        s["combined_confidence"] = round((1.0 - w) * pps_conf + w * wr, 3)
+    return signals
+
+
+_TF_NORMALISE = {
+    "1m": "M1", "m1": "M1", "M1": "M1",
+    "5m": "M5", "m5": "M5", "M5": "M5",
+    "15m": "M15", "m15": "M15", "M15": "M15",
+    "30m": "M30", "m30": "M30", "M30": "M30",
+    "1h": "H1", "h1": "H1", "H1": "H1",
+    "1d": "D1", "1D": "D1", "d1": "D1", "D1": "D1",
+}
+
+
+def normalise_timeframe(tf: str) -> str:
+    """Map any timeframe label (1d / 1D / D1 / 30m …) to the canonical
+    M-form the accuracy store keys on. Unknown → D1."""
+    return _TF_NORMALISE.get(tf) or _TF_NORMALISE.get(str(tf).lower(), "D1")
+
+
+def resolve_pps_outcomes(
+    signals: List[dict],
+    bars: List[dict],
+    max_hold_bars: int = 15,
+) -> List[dict]:
+    """PPS → Analytics: walk each BUY/SELL signal forward to its target/stop
+    outcome with NO look-ahead, returning records ready for the
+    pattern-accuracy store.
+
+    For each resolvable signal returns
+    ``{pattern_name, outcome ('win'|'loss'), rr_achieved, hold_bars}`` using
+    the canonical pattern name (so it lines up with the Analytics → PPS
+    read-back). Conservative tie-break: a single bar straddling both target
+    and stop counts as LOSS (we can't see intrabar ordering). A signal that
+    never hits either within max_hold_bars is bucketed by the sign of its
+    close-out return. Signals without a forward bar to resolve are skipped.
+    """
+    out: List[dict] = []
+    n = len(bars)
+    for s in signals:
+        if s.get("signal") not in ("BUY", "SELL"):
+            continue
+        name = PPS_PATTERN_NAMES.get(s.get("pattern") or "")
+        if not name:
+            continue
+        entry, stop, target = s.get("entry_price"), s.get("stop_loss"), s.get("target_price")
+        if entry is None or stop is None or target is None:
+            continue
+        i = int(s.get("bar_index", -1))
+        if i < 0 or i + 1 >= n:
+            continue  # need ≥1 forward bar
+        is_buy = s["signal"] == "BUY"
+        end = min(i + max_hold_bars + 1, n)
+        outcome: Optional[str] = None
+        hold = 0
+        for j in range(i + 1, end):
+            hi, lo = float(bars[j]["high"]), float(bars[j]["low"])
+            hit_stop = lo <= stop if is_buy else hi >= stop
+            hit_tgt = hi >= target if is_buy else lo <= target
+            if hit_stop:            # stop checked first (conservative tie-break)
+                outcome, hold = "loss", j - i
+                break
+            if hit_tgt:
+                outcome, hold = "win", j - i
+                break
+        if outcome is None:
+            last = float(bars[end - 1]["close"])
+            pct = (last - entry) / entry * (1 if is_buy else -1)
+            outcome, hold = ("win" if pct > 0 else "loss"), end - 1 - i
+        rr = float(s.get("risk_reward") or 0.0) if outcome == "win" else -1.0
+        out.append({
+            "pattern_name": name,
+            "outcome": outcome,
+            "rr_achieved": rr,
+            "hold_bars": hold,
+        })
+    return out

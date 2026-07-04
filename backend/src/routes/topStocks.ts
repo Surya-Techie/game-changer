@@ -44,15 +44,6 @@ interface TopStockRow {
   sliderPct: number;
 }
 
-function recommendationFromScore(s: number | null): TopStockRow["recommendation"] {
-  if (s == null) return null;
-  if (s >= 75) return "STRONG BUY";
-  if (s >= 60) return "BUY";
-  if (s >= 40) return "NEUTRAL";
-  if (s >= 25) return "SELL";
-  return "STRONG SELL";
-}
-
 async function buildRow(symbol: string, adRatio: number | null): Promise<TopStockRow> {
   const candles = candleAggregator.getCandles(symbol, 500);
   const lastPrice = priceBook.price(symbol) ?? candles[candles.length - 1]?.c ?? null;
@@ -156,7 +147,7 @@ router.get("/", async (_req, res, next) => {
 
 router.get("/sliderbands", (_req, res) => {
   // Exposed so the UI can change band labels without redeploying — but the
-  // recommendation logic lives server-side in recommendationFromScore.
+  // recommendation itself is computed server-side from the composite score.
   res.json({
     bands: [
       { min: 0,  max: 25, label: "STRONG SELL", tone: "sell-strong" },

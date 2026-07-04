@@ -14,6 +14,9 @@ export interface Signal {
   suggestedStop?: number;
   suggestedTarget?: number;
   createdAt?: string;
+  // Provenance of the prices behind this signal: real NSE ticks ("live")
+  // or the dev synthetic walk ("synthetic").
+  dataSource?: "live" | "synthetic";
   // Phase 11 Layer 6 — pattern confirmation attached by signalEngine.
   pattern_confirmation?: {
     pattern_name: string;
@@ -38,6 +41,7 @@ interface AccuracyBucket {
 
 interface AccuracyResponse {
   overall: AccuracyBucket;
+  liveOnly?: AccuracyBucket;
   perSymbol: AccuracyBucket[];
 }
 
@@ -69,7 +73,7 @@ export default function SignalCard({ signal }: { signal?: Signal }) {
 
   if (!signal) {
     return (
-      <div className="bg-bg-panel border border-bg-border rounded-2xl p-4">
+      <div className="card-aurora rounded-2xl p-4">
         <div className="text-xs uppercase tracking-wider text-slate-500 mb-1.5">AI Signal</div>
         <div className="text-slate-400 text-sm">Warming up — waiting for the model to evaluate this symbol.</div>
       </div>
@@ -77,19 +81,31 @@ export default function SignalCard({ signal }: { signal?: Signal }) {
   }
 
   const colors = {
-    BUY: "bg-accent-buy/15 text-accent-buy border-accent-buy/40",
-    SELL: "bg-accent-sell/15 text-accent-sell border-accent-sell/40",
+    BUY: "bg-accent-buy/15 text-accent-buy border-accent-buy/40 shadow-glow-buy",
+    SELL: "bg-accent-sell/15 text-accent-sell border-accent-sell/40 shadow-glow-sell",
     HOLD: "bg-accent-hold/15 text-accent-hold border-accent-hold/40",
   } as const;
 
   const confidencePct = Math.round((signal.confidence ?? 0) * 100);
 
   return (
-    <div className="bg-bg-panel border border-bg-border rounded-2xl p-4">
+    <div className="card-aurora rounded-2xl p-4">
       {/* Header row */}
       <div className="flex items-center justify-between mb-3">
         <div>
-          <div className="text-xs uppercase tracking-wider text-slate-500">AI Signal</div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs uppercase tracking-wider text-slate-500">AI Signal</span>
+            {signal.dataSource === "live" && (
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> LIVE NSE
+              </span>
+            )}
+            {signal.dataSource === "synthetic" && (
+              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                SIM DATA
+              </span>
+            )}
+          </div>
           <div className="text-[11px] text-slate-500 font-mono mt-0.5">{signal.symbol}</div>
         </div>
         <div className={clsx("px-3 py-1.5 rounded-full text-xs font-bold border", colors[signal.action])}>
@@ -177,6 +193,14 @@ function AccuracySection({ accuracy, symbol }: { accuracy: AccuracyResponse | nu
           <div className="text-[10px] text-slate-500 mt-0.5">{sample(overall)}</div>
         </div>
       </div>
+      {accuracy?.liveOnly && accuracy.liveOnly.total > 0 && (
+        <div className="mt-2 flex items-baseline justify-between bg-bg-elevated/30 border border-bg-border rounded-md px-2.5 py-1.5">
+          <span className="text-[10px] uppercase tracking-wider text-emerald-400/80">Live NSE data only</span>
+          <span className="font-mono text-sm text-slate-200">
+            {pct(accuracy.liveOnly)} <span className="text-[10px] text-slate-500">({sample(accuracy.liveOnly)})</span>
+          </span>
+        </div>
+      )}
       <div className="mt-2.5 text-[10px] text-slate-600 leading-relaxed">
         Hit rate = wins / (wins + losses) on signals whose target or stop was reached.
         No system is 100% accurate — markets are partially random. Trade on edge and risk-reward, not perfect calls.

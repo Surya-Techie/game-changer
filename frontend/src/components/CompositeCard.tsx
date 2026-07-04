@@ -3,6 +3,7 @@ import clsx from "clsx";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
 import { fetchLatestPatterns, type PatternDoc } from "../lib/patternApi";
+import { apiErrorMessage } from "../lib/errors";
 
 interface CompositeSignal {
   name: string;
@@ -85,8 +86,8 @@ export default function CompositeCard({ symbol }: { symbol: string }) {
         setData(data as CompositeResponse);
         setWeights(data.weights ?? DEFAULT_WEIGHTS);
       }
-    } catch (err: any) {
-      setError(err?.response?.data?.error ?? err.message ?? "Composite failed");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Composite failed"));
     } finally {
       setLoading(false);
     }
@@ -96,6 +97,7 @@ export default function CompositeCard({ symbol }: { symbol: string }) {
     void load();
     const id = setInterval(() => void load(), 30_000);
     return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, [symbol]);
 
   if (loading && !data) {

@@ -34,6 +34,7 @@ from ._helpers import (
     trend_classify,
     volume_ratio,
     baseline_win_rate,
+    measured_stats,
 )
 from .ml_classifier import EnsembleProbabilities, predict_proba
 
@@ -221,17 +222,42 @@ def score_pattern(
             reasoning.append("No nearby key level → 0")
     components["sr"] = round(sr_pts, 2)
 
-    # 7) Historical win-rate bonus (0–10).
-    base_wr = historical_win_rate_override if historical_win_rate_override is not None else baseline_win_rate(name)
-    # Map 0.50 → 0 pts, 0.80+ → 10 pts.
-    if base_wr <= 0.50:
-        wr_pts = 0.0
-    elif base_wr >= 0.80:
-        wr_pts = 10.0
+    # 7) Measured-performance component (−25 … +10).
+    #
+    # When the calibration study (walk-forward simulation of this exact
+    # engine's detections and exits on real NSE data) has enough samples,
+    # score by MEASURED expectancy:
+    #   exp ≥ +0.30R          → +10
+    #   0 ≤ exp < +0.30R      → 0..+10 linear
+    #   exp < 0               → 0..−25 linear (floor at −0.25R)
+    # A pattern that measurably loses money must not be able to reach the
+    # emit thresholds (70/85) on story points alone — the penalty is what
+    # keeps negative-expectancy setups out of the live feed.
+    # Fallback (no calibration): the old win-rate bonus from literature
+    # baselines or the live PatternAccuracy override.
+    meas = measured_stats(name)
+    if meas is not None and historical_win_rate_override is None:
+        exp_r = float(meas["expectancy_r"])
+        if exp_r >= 0.30:
+            wr_pts = 10.0
+        elif exp_r >= 0.0:
+            wr_pts = exp_r / 0.30 * 10.0
+        else:
+            wr_pts = max(-25.0, exp_r / 0.25 * 25.0)
+        reasoning.append(
+            f"Measured expectancy {exp_r:+.2f}R over {meas['samples']} simulated trades → {wr_pts:+.1f} pts"
+        )
     else:
-        wr_pts = (base_wr - 0.50) / 0.30 * 10.0
+        base_wr = historical_win_rate_override if historical_win_rate_override is not None else baseline_win_rate(name)
+        # Map 0.50 → 0 pts, 0.80+ → 10 pts.
+        if base_wr <= 0.50:
+            wr_pts = 0.0
+        elif base_wr >= 0.80:
+            wr_pts = 10.0
+        else:
+            wr_pts = (base_wr - 0.50) / 0.30 * 10.0
+        reasoning.append(f"Historical win rate {base_wr * 100:.0f}% → {wr_pts:.1f}/10")
     components["historical_win_rate"] = round(wr_pts, 2)
-    reasoning.append(f"Historical win rate {base_wr * 100:.0f}% → {wr_pts:.1f}/10")
 
     # Sum + clamp.
     total = rule_pts + ml_pts + vol_pts + trend_pts + mtf_pts + sr_pts + wr_pts

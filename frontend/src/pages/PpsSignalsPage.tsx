@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { SymbolPicker } from "../components/SymbolSearchInput";
 import {
   createChart,
   ColorType,
@@ -12,6 +13,7 @@ import {
 } from "lightweight-charts";
 import {
   fetchPpsSignals,
+  recordPpsOutcomes,
   PATTERN_SHORT,
   type PpsBar,
   type PpsSignal,
@@ -26,6 +28,7 @@ import PpsSignalFilters, {
 } from "../components/PpsSignalFilters";
 import PpsSignalPanel from "../components/PpsSignalPanel";
 import PpsSignalTable from "../components/PpsSignalTable";
+import { toCandlestickData } from "../lib/candleSanitize";
 
 /**
  * PPS (Pattern Probability Strategy) Signals page.
@@ -70,6 +73,24 @@ export default function PpsSignalsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<{ total_signals: number; buy_count: number; sell_count: number; avg_confidence: number } | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [recordMsg, setRecordMsg] = useState<string | null>(null);
+
+  // PPS → Analytics: resolve this window's outcomes and commit them to the
+  // pattern-accuracy store so PPS patterns gain measured win rates.
+  async function handleRecord() {
+    setRecording(true);
+    setRecordMsg(null);
+    const res = await recordPpsOutcomes({ symbol, timeframe, bars });
+    setRecording(false);
+    if (!res) {
+      setRecordMsg("Failed — AI service unreachable.");
+    } else if (res.reason) {
+      setRecordMsg(res.reason);
+    } else {
+      setRecordMsg(`Recorded ${res.recorded} outcomes (${res.wins ?? 0}W / ${res.losses ?? 0}L) to Analytics.`);
+    }
+  }
 
   // Chart refs.
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -137,14 +158,16 @@ export default function PpsSignalsPage() {
           return;
         }
         // Convert AI-service `t` (epoch ms) → lightweight-charts time +
-        // PPS bar shape (date string YYYY-MM-DD).
-        const cdata: CandlestickData[] = ohlcv.candles.map((c) => ({
-          time: Math.floor(c.t / 1000) as UTCTimestamp,
-          open: c.o, high: c.h, low: c.l, close: c.c,
-        }));
+        // PPS bar shape (date string YYYY-MM-DD). Sanitized: null/NaN OHLC
+        // rows (yfinance illiquid sessions) hard-crash the chart library.
+        const clean = ohlcv.candles.filter(
+          (c) => c.o != null && c.h != null && c.l != null && c.c != null &&
+            isFinite(c.o) && isFinite(c.h) && isFinite(c.l) && isFinite(c.c)
+        );
+        const cdata: CandlestickData[] = toCandlestickData(clean);
         seriesRef.current?.setData(cdata);
         chartRef.current?.timeScale().fitContent();
-        const ppsBars: PpsBar[] = ohlcv.candles.map((c) => ({
+        const ppsBars: PpsBar[] = clean.map((c) => ({
           date: new Date(c.t).toISOString().slice(0, 10),
           open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v,
         }));
@@ -220,13 +243,7 @@ export default function PpsSignalsPage() {
         </div>
         <div className="flex items-center gap-2">
           {/* Symbol picker */}
-          <select
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value)}
-            className="bg-bg-panel border border-bg-border rounded px-3 py-1.5 text-sm text-slate-200"
-          >
-            {SYMBOL_UNIVERSE.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
+          <SymbolPicker value={symbol} onSelect={setSymbol} className="w-[240px]" placeholder="Search any stock…" />
           {/* Timeframe picker */}
           <div className="flex bg-bg-panel rounded border border-bg-border p-0.5">
             {TIMEFRAMES.map((tf) => (
@@ -241,8 +258,22 @@ export default function PpsSignalsPage() {
               </button>
             ))}
           </div>
+          {/* PPS → Analytics: commit this window's resolved outcomes. */}
+          <button
+            onClick={handleRecord}
+            disabled={recording || bars.length < 50}
+            title="Resolve these signals' outcomes and record them to Pattern Analytics (append-only)."
+            className="px-3 py-1.5 text-xs rounded border border-bg-border text-slate-200 hover:bg-bg-border/50 disabled:opacity-50"
+          >
+            {recording ? "Recording…" : "Record to Analytics"}
+          </button>
         </div>
       </div>
+      {recordMsg && (
+        <div className="mb-3 text-xs text-slate-400 border border-bg-border rounded px-3 py-1.5 bg-bg-panel/50">
+          {recordMsg}
+        </div>
+      )}
 
       {/* Filters */}
       <PpsSignalFilters value={filters} onChange={setFilters} />

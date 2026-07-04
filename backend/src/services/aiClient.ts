@@ -305,6 +305,29 @@ export async function getPpsSignals(
   }
 }
 
+/**
+ * Proxy to AI service POST /pps-signals/record (PPS → Analytics).
+ * Resolves each PPS signal's outcome and commits it to the pattern-accuracy
+ * store. Append-only — intended for deliberate batch/backfill use.
+ */
+export async function recordPpsOutcomes(
+  symbol: string,
+  timeframe: string,
+  bars: PpsBarIn[]
+): Promise<Record<string, unknown> | null> {
+  try {
+    const { data } = await client.post(
+      "/pps-signals/record",
+      { symbol, timeframe, bars },
+      { timeout: 30_000 }
+    );
+    return data as Record<string, unknown>;
+  } catch (err) {
+    logger.warn("AI /pps-signals/record failed", { symbol, err: (err as Error).message });
+    return null;
+  }
+}
+
 export async function trainMl(symbol: string, candles: Candle[], horizon = 5): Promise<unknown | null> {
   try {
     const { data } = await client.post(
@@ -355,7 +378,7 @@ export async function getCandlestickPatterns(symbol: string, candles: Candle[], 
 // service owns the orchestration logic.
 // ────────────────────────────────────────────────────────────────────────
 
-export type PatternTimeframe = "M5" | "M15" | "H1" | "D1";
+export type PatternTimeframe = "M1" | "M5" | "M15" | "M30" | "H1" | "D1";
 
 export interface PatternDetectionResult {
   pattern_name: string;
@@ -446,7 +469,7 @@ export async function fetchPatternAccuracy(): Promise<PatternAccuracyResponse | 
   }
 }
 
-export type PatternChartTimeframe = "M1" | "M5" | "M15" | "H1" | "D1" | "Y1";
+export type PatternChartTimeframe = "M1" | "M5" | "M15" | "M30" | "H1" | "D1" | "Y1";
 
 export interface PatternOhlcvResponse {
   symbol: string;

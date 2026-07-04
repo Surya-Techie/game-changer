@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import clsx from "clsx";
 import { api } from "../../lib/api";
 import { overlayManager } from "../../lib/overlayManager";
 import { usePremium } from "../../store/premium";
 import PremiumIndicatorCard from "../PremiumIndicatorCard";
+import { apiErrorMessage } from "../../lib/errors";
 
 interface OrderBlock { barIdx: number; t: number; top: number; bottom: number; mitigated: boolean }
 interface Fvg { type: "bullish" | "bearish"; barIdx: number; t: number; top: number; bottom: number; filled: boolean }
@@ -51,8 +51,8 @@ export default function SmcIndicator({ symbol }: { symbol: string }) {
       setData(data as SmcResponse);
       setUpdated(Date.now());
       setLoadState("smc", "ready");
-    } catch (err: any) {
-      const msg = err?.response?.data?.error ?? err.message ?? "Failed";
+    } catch (err) {
+      const msg = apiErrorMessage(err, "Failed");
       setError(msg);
       setLoadState("smc", "error", msg);
     }

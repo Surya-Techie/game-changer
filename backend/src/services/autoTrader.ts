@@ -8,6 +8,17 @@ import { broker } from "./brokers/registry.js";
 import { isMarketOpen } from "./paper/marketHours.js";
 import { logger } from "../utils/logger.js";
 
+/**
+ * AUTOTRADE_REQUIRE_MARKET — default "true". Set "false" (dev.sh does) so the
+ * auto-trade loop executes against the mock feed even when NSE is closed,
+ * instead of queueing every order until the next open. Mirrors the
+ * patternEngine's PATTERN_ENGINE_REQUIRE_MARKET dev switch. Production keeps
+ * the default and only trades during market hours.
+ */
+function requireMarketOpen(): boolean {
+  return (process.env.AUTOTRADE_REQUIRE_MARKET ?? "true").toLowerCase() === "true";
+}
+
 class AutoTrader {
   // Track market-open transitions so we only flush the queue once per open.
   private wasOpen = false;
@@ -109,21 +120,24 @@ class AutoTrader {
       await positionManager.closePosition(String(existing._id), "FLIP");
     }
 
-    // Respect user's stop mode: override AI's stop/target if FIXED_PCT.
+    // The signal's stop/target carry the *accuracy profile* geometry
+    // (tight target — optimised for measured hit rate, before costs).
+    // Actual trades must cover brokerage + slippage, so the trade target
+    // is always re-derived from the account's own risk settings:
+    //   FIXED_PCT — stop at stopPct of entry, target at targetRR × stop.
+    //   ATR       — keep the AI's ATR-based stop distance, but set the
+    //               target at the account's targetRR × that distance.
+    const entry = sig.suggestedEntry;
     let stop = sig.suggestedStop;
-    let target = sig.suggestedTarget;
+    let stopDist = Math.abs(entry - stop);
     if (state.stopMode === "FIXED_PCT" && state.stopPct > 0) {
-      const entry = sig.suggestedEntry;
-      const stopDist = entry * (state.stopPct / 100);
-      const targetDist = stopDist * state.targetRR;
-      if (desiredSide === "LONG") {
-        stop = Math.round((entry - stopDist) * 100) / 100;
-        target = Math.round((entry + targetDist) * 100) / 100;
-      } else {
-        stop = Math.round((entry + stopDist) * 100) / 100;
-        target = Math.round((entry - targetDist) * 100) / 100;
-      }
+      stopDist = entry * (state.stopPct / 100);
+      stop = desiredSide === "LONG" ? entry - stopDist : entry + stopDist;
     }
+    const targetDist = stopDist * (state.targetRR > 0 ? state.targetRR : 2.0);
+    let target = desiredSide === "LONG" ? entry + targetDist : entry - targetDist;
+    stop = Math.round(stop * 100) / 100;
+    target = Math.round(target * 100) / 100;
 
     const risk = await evaluateNewPosition({
       userId,
@@ -143,8 +157,9 @@ class AutoTrader {
     // Stash a PENDING order so the next-day scan can re-emit / execute it.
     // Mock-broker mode does its execution synchronously and needs the
     // market clock; live (Kite) sessions accept queued orders directly so
-    // we let them pass through.
-    if (broker().mode === "mock" && !isMarketOpen()) {
+    // we let them pass through. When AUTOTRADE_REQUIRE_MARKET=false (dev),
+    // we skip the queue and execute against the mock feed immediately.
+    if (broker().mode === "mock" && requireMarketOpen() && !isMarketOpen()) {
       await Order.create({
         userId,
         symbol: sig.symbol,

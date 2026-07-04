@@ -53,6 +53,7 @@ export type WsEvent =
   | { type: "order"; order: Record<string, unknown> }
   | { type: "position"; position: Record<string, unknown> }
   | { type: "portfolio"; portfolio: Record<string, unknown> }
+  | { type: "alert"; alert: Record<string, unknown> }
   | { type: "paper"; ts: number; event: Record<string, unknown> }
   | { type: "pattern"; pattern: WsPatternPayload }
   | { type: "pattern_signal"; pattern: WsPatternSignalPayload }
@@ -78,7 +79,9 @@ export function useMarketSocket({ token, symbols, onEvent }: Options) {
   symbolsRef.current = symbols;
 
   useEffect(() => {
-    if (!token) return;
+    // Auth is disabled (login removed), so `token` is null — connect anyway;
+    // the backend accepts the dev user without a token. Append the token
+    // only when one exists (future login restore stays compatible).
     let cancelled = false;
     let retryTimer: number | undefined;
     let heartbeatTimer: number | undefined;
@@ -87,7 +90,8 @@ export function useMarketSocket({ token, symbols, onEvent }: Options) {
     function connect() {
       if (cancelled) return;
       setStatus("connecting");
-      const ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent(token!)}`);
+      const url = token ? `${WS_URL}?token=${encodeURIComponent(token)}` : WS_URL;
+      const ws = new WebSocket(url);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -162,6 +166,7 @@ export function useMarketSocket({ token, symbols, onEvent }: Options) {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "subscribe", symbols }));
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, [symbols.join("|")]);
 
   return { status };

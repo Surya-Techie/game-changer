@@ -1,7 +1,9 @@
 import { Router } from "express";
+import axios from "axios";
 import { requireAuth } from "../middleware/auth.js";
 import { getCandles, listSymbols } from "../services/candleAggregator.js";
-import { fetchPatternOhlcv } from "../services/aiClient.js";
+import { fetchPatternOhlcv, type PatternChartTimeframe } from "../services/aiClient.js";
+import { env } from "../config/env.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -11,6 +13,57 @@ router.use(requireAuth);
 
 router.get("/symbols", (_req, res) => {
   res.json({ symbols: listSymbols() });
+});
+
+export interface Quote {
+  symbol: string;
+  ltp: number;
+  open: number;
+  high: number;
+  low: number;
+  prev_close: number;
+  change: number;
+  pct_change: number;
+  ts: number;
+  source: string;
+}
+
+// Short server-side cache so N clients polling every few seconds collapse
+// into one upstream NSE/yfinance batch per TTL window.
+let quotesCache: { key: string; at: number; quotes: Record<string, Quote> } | null = null;
+const QUOTES_TTL_MS = 3_000;
+
+/**
+ * GET /api/market/quotes?symbols=RELIANCE,TCS
+ * Full live quote per symbol: LTP, open, high, low, prev close, change ₹/%.
+ * Proxies the AI service's /nse-live batch (real exchange data during market
+ * hours, last-session values outside them).
+ */
+router.get("/quotes", async (req, res, next) => {
+  try {
+    const raw = String(req.query.symbols ?? "");
+    const symbols = raw
+      .split(",")
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean)
+      .slice(0, 50);
+    if (symbols.length === 0) return res.json({ available: true, quotes: {} });
+
+    const key = symbols.join(",");
+    if (quotesCache && quotesCache.key === key && Date.now() - quotesCache.at < QUOTES_TTL_MS) {
+      return res.json({ available: true, cached: true, quotes: quotesCache.quotes });
+    }
+
+    const { data } = await axios.get(`${env.aiServiceUrl}/nse-live`, {
+      params: { symbols: key },
+      timeout: 10_000,
+    });
+    const quotes = (data?.quotes ?? {}) as Record<string, Quote>;
+    quotesCache = { key, at: Date.now(), quotes };
+    res.json({ available: Boolean(data?.available), quotes });
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.get("/all-stocks", (_req, res) => {
@@ -38,16 +91,18 @@ router.get("/candles/:symbol", async (req, res, next) => {
     const mockSymbols = listSymbols();
 
     // Map timeframe names to backend/yfinance formats
-    const tfMap: Record<string, string> = {
+    const tfMap: Record<string, PatternChartTimeframe> = {
       "1m": "M1",
       "5m": "M5",
       "15m": "M15",
+      "30m": "M30",
       "1h": "H1",
       "1d": "D1",
       "1y": "Y1",
       "m1": "M1",
       "m5": "M5",
       "m15": "M15",
+      "m30": "M30",
       "h1": "H1",
       "d1": "D1",
       "y1": "Y1",
@@ -63,7 +118,7 @@ router.get("/candles/:symbol", async (req, res, next) => {
     // source of truth for chart history; the aggregator still works
     // for downstream pattern / signal engines that need live ticks.
     void mockSymbols;
-    const ohlcv = await fetchPatternOhlcv(symbol, activeTf as any, limit);
+    const ohlcv = await fetchPatternOhlcv(symbol, activeTf, limit);
     if (ohlcv && ohlcv.candles?.length) {
       res.json({ symbol, candles: ohlcv.candles });
     } else {

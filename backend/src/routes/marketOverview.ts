@@ -1,11 +1,59 @@
 import { Router } from "express";
+import axios from "axios";
 import { requireAuth } from "../middleware/auth.js";
 import { candleAggregator } from "../services/candleAggregator.js";
 import { priceBook } from "../services/priceBook.js";
 import { mockFeed } from "../services/mockFeed.js";
+import { env } from "../config/env.js";
 
 const router = Router();
 router.use(requireAuth);
+
+// ─── Real index adapter (yfinance via ai-service) ────────────────────────
+// Yahoo carries the NSE/BSE indices: ^NSEI Nifty50, ^BSESN Sensex,
+// ^NSEBANK Bank Nifty, ^INDIAVIX India VIX, plus the CNX sector indices.
+// One batch per minute serves every dashboard client.
+
+interface IdxQuote { ltp: number; pct_change: number; prev_close: number }
+
+const INDEX_SYMBOLS: Record<string, string> = {
+  nifty: "^NSEI",
+  sensex: "^BSESN",
+  bankNifty: "^NSEBANK",
+  indiaVix: "^INDIAVIX",
+  sectorIT: "^CNXIT",
+  sectorAuto: "^CNXAUTO",
+  sectorPharma: "^CNXPHARMA",
+  sectorFMCG: "^CNXFMCG",
+  sectorMetal: "^CNXMETAL",
+  sectorEnergy: "^CNXENERGY",
+};
+
+let idxCache: { at: number; quotes: Record<string, IdxQuote> } = { at: 0, quotes: {} };
+const IDX_TTL_MS = 60_000;
+
+async function fetchIndices(): Promise<Record<string, IdxQuote>> {
+  if (Date.now() - idxCache.at < IDX_TTL_MS) return idxCache.quotes;
+  try {
+    const symbols = Object.values(INDEX_SYMBOLS).join(",");
+    const { data } = await axios.get(`${env.aiServiceUrl}/nse-live`, {
+      params: { symbols },
+      timeout: 12_000,
+    });
+    const raw = (data?.quotes ?? {}) as Record<string, IdxQuote>;
+    const byKey: Record<string, IdxQuote> = {};
+    for (const [key, ticker] of Object.entries(INDEX_SYMBOLS)) {
+      const q = raw[ticker.toUpperCase()];
+      if (q && isFinite(q.ltp) && q.ltp > 0) byKey[key] = q;
+    }
+    // Only refresh the cache timestamp when we actually got something, so a
+    // rate-limited window retries next request instead of caching emptiness.
+    if (Object.keys(byKey).length > 0) idxCache = { at: Date.now(), quotes: byKey };
+    return byKey;
+  } catch {
+    return idxCache.quotes; // stale > nothing
+  }
+}
 
 /**
  * Market-overview panel.
@@ -68,20 +116,41 @@ router.get("/", async (_req, res, next) => {
       }
     }
 
-    // Stable-ish synthetic values (deterministic per hour bucket so the UI
-    // doesn't jitter wildly). These get swapped with real feeds later.
+    // ── Real indices (yfinance) with per-field mock fallback ────────────
+    const idx = await fetchIndices();
     const hourBucket = Math.floor(Date.now() / (1000 * 60 * 60));
     const synthRng = (seed: number) => {
-      let x = Math.sin(seed * 9301 + 49297) * 233280;
+      const x = Math.sin(seed * 9301 + 49297) * 233280;
       return x - Math.floor(x);
     };
-    const indiaVix = 13 + synthRng(hourBucket) * 8;     // 13–21
-    const pcr = 0.85 + synthRng(hourBucket + 1) * 0.6;  // 0.85–1.45
-    const fiiNetCr = (synthRng(hourBucket + 2) - 0.5) * 3000; // ±1500 cr
+
+    const indiaVix = idx.indiaVix?.ltp ?? 13 + synthRng(hourBucket) * 8;
+    const bankNiftyChange = idx.bankNifty?.pct_change ?? (synthRng(hourBucket + 4) - 0.5) * 2;
+    const sensexChange = idx.sensex?.pct_change ?? (synthRng(hourBucket + 5) - 0.5) * 2;
+    // PCR / FII-DII / GIFT Nifty have no free reliable source — still mock.
+    const pcr = 0.85 + synthRng(hourBucket + 1) * 0.6;
+    const fiiNetCr = (synthRng(hourBucket + 2) - 0.5) * 3000;
     const diiNetCr = (synthRng(hourBucket + 3) - 0.5) * 2500;
-    const bankNiftyChange = (synthRng(hourBucket + 4) - 0.5) * 2;
-    const sensexChange = (synthRng(hourBucket + 5) - 0.5) * 2;
     const sgxNiftyChange = (synthRng(hourBucket + 6) - 0.5) * 1.5;
+
+    const sectorDefs: Array<{ name: string; key: string; seed: number }> = [
+      { name: "IT", key: "sectorIT", seed: 10 },
+      { name: "Banking", key: "bankNifty", seed: 11 },
+      { name: "Auto", key: "sectorAuto", seed: 12 },
+      { name: "Pharma", key: "sectorPharma", seed: 13 },
+      { name: "FMCG", key: "sectorFMCG", seed: 14 },
+      { name: "Metal", key: "sectorMetal", seed: 15 },
+      { name: "Energy", key: "sectorEnergy", seed: 16 },
+    ];
+    const sectors = sectorDefs.map((s) => {
+      const q = idx[s.key];
+      return {
+        name: s.name,
+        changePct: Number((q?.pct_change ?? synthRng(hourBucket + s.seed) * 4 - 2).toFixed(2)),
+        source: q ? "live" : "mock",
+      };
+    });
+    const sectorsLive = sectors.every((s) => s.source === "live");
 
     res.json({
       ts: Date.now(),
@@ -91,14 +160,28 @@ router.get("/", async (_req, res, next) => {
         decliners,
         breadthPct: Number(breadthPct.toFixed(1)),
         symbolsEvaluated: totalEval,
-        niftyProxy: niftyProxy != null ? Number(niftyProxy.toFixed(2)) : null,
-        niftyProxyChangePct: niftyChange != null ? Number(niftyChange.toFixed(3)) : null,
+        // Real Nifty 50 index when Yahoo delivers; equal-weight proxy kept
+        // as fallback so the tile never goes blank.
+        niftyProxy: idx.nifty ? Number(idx.nifty.ltp.toFixed(2)) : (niftyProxy != null ? Number(niftyProxy.toFixed(2)) : null),
+        niftyProxyChangePct: idx.nifty
+          ? Number(idx.nifty.pct_change.toFixed(3))
+          : (niftyChange != null ? Number(niftyChange.toFixed(3)) : null),
+        niftyIsRealIndex: Boolean(idx.nifty),
       },
-      // CLEARLY LABELED MOCK — these are placeholders until real data adapters
-      // are wired (NSE bhavcopy / yfinance / paid feed).
+      // Per-field provenance — the UI shows LIVE/MOCK badges from this.
+      sources: {
+        indiaVix: idx.indiaVix ? "live" : "mock",
+        bankNifty: idx.bankNifty ? "live" : "mock",
+        sensex: idx.sensex ? "live" : "mock",
+        nifty: idx.nifty ? "live" : "mock",
+        sectors: sectorsLive ? "live" : "mixed",
+        pcr: "mock",
+        fii: "mock",
+        sgxNifty: "mock",
+      },
       synthetic: {
-        source: "mock",
-        note: "Demo values. Wire NSE bhavcopy / paid feed in routes/marketOverview.ts to replace.",
+        source: "mixed",
+        note: "PCR / FII-DII / GIFT Nifty are demo values (no free reliable source). Indices and sectors are live Yahoo Finance data when reachable.",
         indiaVix: Number(indiaVix.toFixed(2)),
         indiaVixZone: indiaVix < 15 ? "calm" : indiaVix < 20 ? "caution" : "fear",
         pcr: Number(pcr.toFixed(2)),
@@ -109,15 +192,7 @@ router.get("/", async (_req, res, next) => {
         sensexChangePct: Number(sensexChange.toFixed(2)),
         sgxNiftyChangePct: Number(sgxNiftyChange.toFixed(2)),
       },
-      sectors: [
-        { name: "IT", changePct: synthRng(hourBucket + 10) * 4 - 2 },
-        { name: "Banking", changePct: synthRng(hourBucket + 11) * 4 - 2 },
-        { name: "Auto", changePct: synthRng(hourBucket + 12) * 4 - 2 },
-        { name: "Pharma", changePct: synthRng(hourBucket + 13) * 4 - 2 },
-        { name: "FMCG", changePct: synthRng(hourBucket + 14) * 4 - 2 },
-        { name: "Metal", changePct: synthRng(hourBucket + 15) * 4 - 2 },
-        { name: "Energy", changePct: synthRng(hourBucket + 16) * 4 - 2 },
-      ].map((s) => ({ ...s, changePct: Number(s.changePct.toFixed(2)) })),
+      sectors,
     });
   } catch (err) {
     next(err);

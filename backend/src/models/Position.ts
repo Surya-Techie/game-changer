@@ -15,7 +15,7 @@ const positionSchema = new Schema(
     status: { type: String, enum: ["OPEN", "CLOSED"], default: "OPEN", index: true },
     exitPrice: { type: Number },
     exitAt: { type: Date },
-    exitReason: { type: String, enum: ["SL", "TP", "TRAIL", "PARTIAL_TP", "MANUAL", "FLIP", null], default: null },
+    exitReason: { type: String, enum: ["SL", "TP", "TRAIL", "PARTIAL_TP", "MANUAL", "FLIP", "RISK", null], default: null },
     realisedPnl: { type: Number, default: 0 },
     sourceSignalId: { type: Types.ObjectId, ref: "Signal" },
 

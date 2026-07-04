@@ -173,7 +173,11 @@
       "Bash(curl -sS --max-time 5 -X POST -o /tmp/c.json -w 'WIPRO.B → HTTP %{http_code}\\\\n' -H 'Content-Type: application/json' -d '{\"symbol\":\"WIPRO.B\"}' http://localhost:8000/chan-advisor/recommend)",
       "Bash(xargs -0 python3 -m py_compile)",
       "Bash(echo \"EXIT: $?\")",
-      "Bash(awk -F= '{if\\(NF>1\\){print $1\"=[\"length\\($2\\)\" chars]\"}else{print}}' backend/.env)"
+      "Bash(awk -F= '{if\\(NF>1\\){print $1\"=[\"length\\($2\\)\" chars]\"}else{print}}' backend/.env)",
+      "Bash(gh auth *)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\('scripts',{}\\),indent=2\\)\\)\")",
+      "Bash(npm -v)",
+      "Bash(.venv/bin/python -c \"import yfinance, sys; print\\('yfinance', yfinance.__version__, 'py', sys.version.split\\(\\)[0]\\)\")"
     ]
   }
 }

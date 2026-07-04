@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import clsx from "clsx";
 import { api } from "../lib/api";
+import { SymbolPicker } from "../components/SymbolSearchInput";
 
 interface FormulaCondition {
   indicator: string;
@@ -159,7 +160,7 @@ export default function AlertsPage() {
   const def = TYPE_DEFS[type];
 
   return (
-    <div className="min-h-screen bg-app-radial text-slate-200">
+    <div className="min-h-full bg-app-radial text-slate-200">
       <header className="border-b border-bg-border bg-bg-panel-solid/60 backdrop-blur-glass px-6 py-4">
         <Link to="/" className="text-xs text-slate-500 hover:text-white">← Dashboard</Link>
         <h1 className="text-xl font-semibold text-white">Alerts</h1>
@@ -171,9 +172,7 @@ export default function AlertsPage() {
           <div className="text-sm uppercase tracking-wider text-slate-500 mb-3">Create alert</div>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 items-end">
             <Field label="Symbol">
-              <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="input">
-                {SYMBOLS.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
+              <SymbolPicker value={symbol} onSelect={setSymbol} placeholder="Search any stock…" />
             </Field>
             <Field label="Condition">
               <select value={type} onChange={(e) => { setType(e.target.value); const d = TYPE_DEFS[e.target.value]; if (d) setValue(d.valueDefault); }} className="input">

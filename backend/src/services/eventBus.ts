@@ -16,6 +16,9 @@ export interface SignalEvent {
   suggestedStop?: number;
   suggestedTarget?: number;
   reason?: string;
+  // Provenance of the prices behind this signal: real NSE ticks or the
+  // dev synthetic walk. Lets consumers (UI, accuracy stats) separate them.
+  dataSource?: "live" | "synthetic";
   // Phase 11 — Layer 6 pattern confirmation snapshot (best agreeing or
   // conflicting pattern at signal time). null when no high-confidence pattern fired.
   pattern_confirmation?: {
@@ -56,6 +59,7 @@ export interface PositionEvent {
 
 export interface PortfolioEvent {
   userId: string;
+  capital: number;
   equity: number;
   realisedPnl: number;
   unrealisedPnl: number;
@@ -117,12 +121,25 @@ export interface PatternTrainingProgressEvent {
   error?: string;
 }
 
+/** A user-facing alert firing (price/indicator condition met). Its own
+ * channel so the UI shows a proper alert notification instead of a fake
+ * qty-0 position. */
+export interface AlertEvent {
+  userId: string;
+  alertId: string;
+  symbol: string;
+  alertType: string;        // e.g. PRICE_ABOVE, INDICATOR_FORMULA
+  value?: number;           // the observed value that triggered it
+  message: string;
+}
+
 type Events = {
   tick: (t: Tick) => void;
   signal: (s: SignalEvent) => void;
   order: (o: OrderEvent) => void;
   position: (p: PositionEvent) => void;
   portfolio: (p: PortfolioEvent) => void;
+  alert: (a: AlertEvent) => void;
   paper: (e: PaperEventEnvelope) => void;
   pattern: (p: PatternEvent) => void;
   pattern_signal: (p: PatternSignalEvent) => void;

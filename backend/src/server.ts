@@ -3,6 +3,7 @@ import { env } from "./config/env.js";
 import { createApp } from "./app.js";
 import { connectMongo, disconnectMongo } from "./db/mongo.js";
 import { seedPatternsIfEmpty } from "./db/seedPatterns.js";
+import { migrateAccountDefaults } from "./db/migrateAccountDefaults.js";
 import "./db/redis.js"; // initialises cache (in-mem or Redis)
 import { mockFeed } from "./services/mockFeed.js";
 import { candleAggregator } from "./services/candleAggregator.js";
@@ -21,6 +22,7 @@ import { logger } from "./utils/logger.js";
 
 async function main() {
   await connectMongo();
+  await migrateAccountDefaults();
 
   // Demo seed for the Pattern Analytics dashboard in dev / in-mem-Mongo
   // mode. Skips automatically when the collection already has documents,
@@ -38,7 +40,10 @@ async function main() {
   attachWebSocket(server);
 
   if (env.mockFeedEnabled) {
-    candleAggregator.warmup(500);
+    // Seed candle history from REAL NSE bars (non-blocking — the signal
+    // engine simply waits until a symbol has ≥30 candles). Falls back to
+    // the synthetic seed only in offline dev mode.
+    void candleAggregator.warmupReal(500);
     mockFeed.start(800);
   }
 

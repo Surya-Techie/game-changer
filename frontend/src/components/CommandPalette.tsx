@@ -21,7 +21,7 @@ export default function CommandPalette({ open, onClose, symbols, onPickSymbol }:
   const nav = useNavigate();
   const [q, setQ] = useState("");
   const [allStocks, setAllStocks] = useState<StockItem[]>([]);
-  const [loadingStocks, setLoadingStocks] = useState(false);
+  const [, setLoadingStocks] = useState(false);
 
   useEffect(() => {
     if (!open) {

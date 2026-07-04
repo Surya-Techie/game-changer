@@ -36,7 +36,8 @@ export default function GainzAlphaCard({ symbol, capital }: Props) {
     setLoading(false);
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [symbol]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
+  useEffect(() => { load();   }, [symbol]);
 
   const sig = data?.signal ?? "NO_PATTERN";
   const style = SIGNAL_STYLES[sig] ?? SIGNAL_STYLES.NEUTRAL;

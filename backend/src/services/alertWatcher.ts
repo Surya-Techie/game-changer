@@ -106,32 +106,29 @@ function evaluateIndicatorAlert(type: string, value: number | undefined, candles
 
 const lastTickPriceMap = new Map<string, number>();
 
+// Alert docs are hydrated Mongoose documents that get mutated and saved;
+// Mongoose's find() return type collapses unhelpfully across versions, so
+// this file deliberately treats them as `any` at the boundary.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function fireAlert(alert: any, observed: number | undefined) {
   alert.triggerCount += 1;
   alert.lastTriggeredAt = new Date();
   alert.lastTriggeredValue = observed;
   alert.history = [{ ts: new Date(), value: observed }, ...(alert.history ?? [])].slice(0, 20);
   await alert.save();
-  bus.emit("portfolio", {
+  // Dedicated alert channel — NOT a piggyback on "position" (which injected
+  // a phantom qty-0 position and a bogus "Opened ×0" notification) and NOT a
+  // "portfolio" emit (which would zero the dashboard equity).
+  bus.emit("alert", {
     userId: String(alert.userId),
-    equity: 0,
-    realisedPnl: 0,
-    unrealisedPnl: 0,
-    dailyPnl: 0,
-    openPositions: 0,
-    // (kept to silence the type — actual alert payload is broadcast below)
-  });
-  // Custom event for alert UI — piggyback on the position channel via a tag.
-  bus.emit("position", {
-    userId: String(alert.userId),
-    positionId: `alert:${alert._id}`,
-    symbol: alert.symbol,
-    side: "LONG",
-    qty: 0,
-    entryPrice: observed ?? 0,
-    status: "OPEN",
-    exitReason: `ALERT:${alert.type}`,
-    realisedPnl: 0,
+    alertId: String(alert._id),
+    symbol: String(alert.symbol),
+    alertType: String(alert.type),
+    value: observed,
+    message:
+      observed != null
+        ? `${alert.symbol} ${alert.type} triggered at ${observed}`
+        : `${alert.symbol} ${alert.type} triggered`,
   });
   logger.info("Alert fired", { id: String(alert._id), symbol: alert.symbol, type: alert.type, observed });
 }
@@ -261,6 +258,7 @@ function startFormulaEvaluator() {
     // Mongoose's `find()` return type collapses to `unknown[]` here in some
     // versions, and the rest of this file already treats alert docs as
     // `any` (see fireAlert above). We follow the same pattern for consistency.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let alerts: any[] = [];
     try {
       alerts = await Alert.find({ enabled: true, type: "INDICATOR_FORMULA" });
@@ -270,6 +268,7 @@ function startFormulaEvaluator() {
     }
     if (alerts.length === 0) return;
     // Group by (symbol, timeframe) so we only hit /indicators/snapshot once per group.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const groups = new Map<string, any[]>();
     for (const a of alerts) {
       const tf = (a.formulaTimeframe as string | undefined) ?? "M15";
@@ -303,6 +302,7 @@ function startFormulaEvaluator() {
 }
 
 async function evaluateFormulaAlert(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   a: any,
   snapshot: Record<string, number | null>
 ) {

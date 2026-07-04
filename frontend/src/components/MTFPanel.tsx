@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import clsx from "clsx";
 import { motion } from "framer-motion";
 import { api } from "../lib/api";
+import { apiErrorMessage } from "../lib/errors";
 
 interface TfRow {
   bars: number;
@@ -20,7 +21,7 @@ interface MtfResponse {
   alignment: { score: number; outOf: number; direction: "BULL" | "BEAR" | "NEUTRAL" };
 }
 
-const TF_ORDER = ["1m", "5m", "15m", "1h", "1D"];
+const TF_ORDER = ["1m", "5m", "15m", "30m", "1h", "1D"];
 
 export default function MTFPanel({ symbol }: { symbol: string }) {
   const [data, setData] = useState<MtfResponse | null>(null);
@@ -38,8 +39,8 @@ export default function MTFPanel({ symbol }: { symbol: string }) {
           if (data.error) setError(data.error);
           else { setData(data as MtfResponse); setError(null); }
         }
-      } catch (err: any) {
-        if (!aborted) setError(err?.response?.data?.error ?? "MTF failed");
+      } catch (err) {
+        if (!aborted) setError(apiErrorMessage(err, "MTF failed"));
       } finally {
         if (!aborted) setLoading(false);
       }

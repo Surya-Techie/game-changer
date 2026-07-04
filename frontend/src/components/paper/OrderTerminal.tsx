@@ -1,5 +1,6 @@
 import clsx from "clsx";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { SymbolPicker } from "../SymbolSearchInput";
 import {
   paperApi,
   type OrderType,
@@ -221,17 +222,7 @@ export default function OrderTerminal({
 
       {/* Symbol + LTP */}
       <div className="flex items-center gap-2">
-        <select
-          value={symbol}
-          onChange={(e) => setSymbol(e.target.value)}
-          className="bg-bg-elevated border border-bg-border rounded-md px-2 py-1.5 text-sm text-white font-mono flex-1"
-        >
-          {universe.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
+        <SymbolPicker value={symbol} onSelect={setSymbol} className="flex-1" placeholder="Search any stock…" />
         <div className="text-right">
           <div className="text-xs text-slate-500">LTP</div>
           <div className="text-base font-mono text-white">{quote ? `₹${quote.price.toFixed(2)}` : "—"}</div>

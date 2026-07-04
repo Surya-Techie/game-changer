@@ -13,7 +13,7 @@ const tradeSchema = new Schema(
     exitAt: { type: Date, required: true },
     exitReason: {
       type: String,
-      enum: ["SL", "TP", "TRAIL", "PARTIAL_TP", "MANUAL", "FLIP"],
+      enum: ["SL", "TP", "TRAIL", "PARTIAL_TP", "MANUAL", "FLIP", "RISK"],
       required: true,
     },
     pnl: { type: Number, required: true },

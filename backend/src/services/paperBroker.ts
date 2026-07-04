@@ -12,6 +12,11 @@ export interface PlaceOrderInput {
   qty: number;
   source: "MANUAL" | "AUTO";
   sourceSignalId?: string;
+  // Optional exact fill price. Used for stop/target exits so the position
+  // fills AT the trigger level instead of the current (possibly gapped)
+  // tick — models how a stop/limit order actually fills and keeps the
+  // synthetic-feed demo P&L realistic instead of whipsawed.
+  fillPrice?: number;
 }
 
 export interface FillResult {
@@ -25,10 +30,14 @@ class PaperBroker {
    * Returns the fill so the caller can open/close a position atomically.
    */
   async submitMarket(input: PlaceOrderInput): Promise<FillResult> {
-    const last = priceBook.price(input.symbol);
+    const { fillPrice, ...orderInput } = input;
+    // An explicit fillPrice (stop/target exit) fills AT that level — no
+    // priceBook lookup, no slippage, no "no live price" rejection.
+    const override = fillPrice != null && fillPrice > 0 ? round2(fillPrice) : null;
+    const last = override ?? priceBook.price(input.symbol);
     if (last == null) {
       const rejected = await Order.create({
-        ...input,
+        ...orderInput,
         type: "MARKET",
         status: "REJECTED",
         rejectReason: "No live price",
@@ -44,11 +53,11 @@ class PaperBroker {
       throw new Error("No live price for symbol");
     }
 
-    const slip = (last * SLIPPAGE_BPS) / 10_000;
+    const slip = override != null ? 0 : (last * SLIPPAGE_BPS) / 10_000;
     const filledPrice = round2(input.side === "BUY" ? last + slip : last - slip);
 
     const order = await Order.create({
-      ...input,
+      ...orderInput,
       type: "MARKET",
       status: "FILLED",
       filledPrice,

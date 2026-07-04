@@ -36,6 +36,12 @@ export interface PpsSignal {
   target_price: number | null;
   risk_reward: number | null;
   trend_aligned: boolean;
+  // Analytics → PPS enrichment. measured_win_rate is the pattern's measured
+  // historical win rate (0..1) when it has resolved samples, else null.
+  // combined_confidence blends the engine confidence toward it by sample size.
+  measured_win_rate?: number | null;
+  measured_samples?: number;
+  combined_confidence?: number;
 }
 
 export interface PpsSignalsResponse {
@@ -82,6 +88,36 @@ export async function fetchPpsSignals(opts: {
 }): Promise<PpsSignalsResponse | null> {
   try {
     const { data } = await api.post<PpsSignalsResponse>("/api/pps-signals", {
+      symbol: opts.symbol.toUpperCase(),
+      timeframe: opts.timeframe ?? "1D",
+      bars: opts.bars,
+    });
+    return data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export interface PpsRecordResult {
+  recorded: number;
+  wins?: number;
+  losses?: number;
+  reason?: string;
+  timeframe?: string;
+}
+
+/**
+ * Call POST /api/pps-signals/record (PPS → Analytics). Resolves the current
+ * window's PPS outcomes and commits them to the pattern-accuracy store.
+ * Append-only — trigger deliberately, not on every load.
+ */
+export async function recordPpsOutcomes(opts: {
+  symbol: string;
+  timeframe?: string;
+  bars?: PpsBar[];
+}): Promise<PpsRecordResult | null> {
+  try {
+    const { data } = await api.post<PpsRecordResult>("/api/pps-signals/record", {
       symbol: opts.symbol.toUpperCase(),
       timeframe: opts.timeframe ?? "1D",
       bars: opts.bars,

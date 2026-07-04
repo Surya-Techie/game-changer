@@ -6,6 +6,7 @@ import { api } from "../lib/api";
 import { useAuth } from "../store/auth";
 import { useMarketSocket, type WsEvent, type WsPatternPayload } from "../lib/socket";
 import { scanPatterns, type PatternTimeframe } from "../lib/patternApi";
+import { apiErrorMessage } from "../lib/errors";
 
 interface ScanRow {
   symbol: string;
@@ -23,9 +24,23 @@ interface ScanRow {
   matched: boolean;
 }
 
-interface Preset { id: string; label: string; conditions: any[] }
+/** Full live quote from /api/market/quotes (NSE via the AI service). */
+interface Quote {
+  symbol: string;
+  ltp: number;
+  open: number;
+  high: number;
+  low: number;
+  prev_close: number;
+  change: number;
+  pct_change: number;
+  ts: number;
+  source: string;
+}
 
 interface Condition { field: string; operator: "<" | "<=" | ">" | ">=" | "==" | "!="; value: number }
+
+interface Preset { id: string; label: string; conditions: Condition[] }
 
 const FIELDS = [
   { v: "rsi14", label: "RSI(14)" },
@@ -55,14 +70,55 @@ export default function ScannerPage() {
     void api.get("/api/scanner/presets").then(({ data }) => setPresets(data.presets ?? []));
   }, []);
 
+  // Live quotes for the scan results: the scan itself is a snapshot, but
+  // LTP / OHLC / change keep ticking afterwards. Chunked into 50-symbol
+  // batches (the endpoint cap); refreshes every 5 s while results are shown.
+  const [quotes, setQuotes] = useState<Record<string, Quote>>({});
+  const [quotesAt, setQuotesAt] = useState<number | null>(null);
+  const scanSymbolsKey = rows.map((r) => r.symbol).join(",");
+  useEffect(() => {
+    if (!scanSymbolsKey) {
+      setQuotes({});
+      setQuotesAt(null);
+      return;
+    }
+    const symbols = scanSymbolsKey.split(",");
+    let stop = false;
+    const load = async () => {
+      try {
+        const chunks: string[][] = [];
+        for (let i = 0; i < symbols.length; i += 50) chunks.push(symbols.slice(i, i + 50));
+        const results = await Promise.allSettled(
+          chunks.map((c) => api.get("/api/market/quotes", { params: { symbols: c.join(",") } }))
+        );
+        if (stop) return;
+        const merged: Record<string, Quote> = {};
+        for (const r of results) {
+          if (r.status === "fulfilled") Object.assign(merged, r.value.data.quotes ?? {});
+        }
+        setQuotes((prev) => ({ ...prev, ...merged }));
+        setQuotesAt(Date.now());
+      } catch {
+        /* transient — keep the last quotes */
+      }
+    };
+    void load();
+    const t = setInterval(load, 5_000);
+    return () => {
+      stop = true;
+      clearInterval(t);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
+  }, [scanSymbolsKey]);
+
   async function runPreset(id: string) {
     setRunning(true);
     setError(null);
     try {
       const { data } = await api.post(`/api/scanner/preset/${id}`, {});
       setRows((data.rows ?? []) as ScanRow[]);
-    } catch (err: any) {
-      setError(err?.response?.data?.error ?? "Scan failed");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Scan failed"));
     } finally {
       setRunning(false);
     }
@@ -74,8 +130,8 @@ export default function ScannerPage() {
     try {
       const { data } = await api.post("/api/scanner/run", { conditions, combinator, includeComposite });
       setRows((data.rows ?? []) as ScanRow[]);
-    } catch (err: any) {
-      setError(err?.response?.data?.error ?? "Scan failed");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Scan failed"));
     } finally {
       setRunning(false);
     }
@@ -103,7 +159,7 @@ export default function ScannerPage() {
   }
 
   return (
-    <div className="min-h-screen bg-app-radial text-slate-200">
+    <div className="min-h-full bg-app-radial text-slate-200">
       <header className="border-b border-bg-border bg-bg-panel-solid/60 backdrop-blur-glass px-6 py-4">
         <Link to="/" className="text-xs text-slate-500 hover:text-white">← Dashboard</Link>
         <h1 className="text-xl font-semibold text-white">Market Scanner</h1>
@@ -184,7 +240,7 @@ export default function ScannerPage() {
             >+ Add condition</button>
             <label className="text-xs text-slate-400 flex items-center gap-2">
               Combinator
-              <select value={combinator} onChange={(e) => setCombinator(e.target.value as any)} className="bg-bg-elevated border border-bg-border rounded px-2 py-1">
+              <select value={combinator} onChange={(e) => setCombinator(e.target.value as "AND" | "OR")} className="bg-bg-elevated border border-bg-border rounded px-2 py-1">
                 <option value="AND">AND</option>
                 <option value="OR">OR</option>
               </select>
@@ -206,13 +262,31 @@ export default function ScannerPage() {
 
         {tab === "signal" && rows.length > 0 && (
           <section className="bg-bg-panel-solid/70 border border-bg-border rounded-xl overflow-hidden">
-            <div className="px-5 pt-4 pb-2 text-xs text-slate-500">{rows.filter((r) => r.matched).length} matched of {rows.length} scanned</div>
+            <div className="px-5 pt-4 pb-2 flex items-center justify-between">
+              <span className="text-xs text-slate-500">{rows.filter((r) => r.matched).length} matched of {rows.length} scanned</span>
+              <span className="flex items-center gap-1.5 text-[10px] font-mono text-slate-500">
+                {quotesAt ? (
+                  <>
+                    <span className="h-1.5 w-1.5 rounded-full bg-accent-buy animate-pulse" />
+                    quotes live · refreshes every 5s
+                  </>
+                ) : (
+                  "loading quotes…"
+                )}
+              </span>
+            </div>
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-[10px] uppercase tracking-wider text-slate-500">
                 <tr>
                   <th className="text-left px-4 py-2">Symbol</th>
                   {header("LTP", "price")}
+                  <th className="px-3 py-2 text-right">Chg ₹</th>
                   {header("Chg %", "changePct")}
+                  <th className="px-3 py-2 text-right">Open</th>
+                  <th className="px-3 py-2 text-right">High</th>
+                  <th className="px-3 py-2 text-right">Low</th>
+                  <th className="px-3 py-2 text-right">Prev Cl</th>
                   {header("RSI", "rsi14")}
                   {header("MACD H", "macdHist")}
                   {header("ST dir", "supertrendDir")}
@@ -225,16 +299,28 @@ export default function ScannerPage() {
               </thead>
               <tbody className="divide-y divide-bg-border">
                 {sorted.map((r) => {
-                  const up = r.changePct >= 0;
+                  const q = quotes[r.symbol];
+                  const ltp = q?.ltp ?? r.price;
+                  const chgPct = q?.pct_change ?? r.changePct;
+                  const up = chgPct >= 0;
                   return (
                     <tr key={r.symbol} className={clsx(r.matched ? "bg-accent-info/5" : "")}>
                       <td className="px-4 py-1.5">
                         <button onClick={() => nav(`/?symbol=${r.symbol}`)} className="text-white">{r.symbol}</button>
                       </td>
-                      <td className="px-3 py-1.5 text-right font-mono">{r.price.toFixed(2)}</td>
-                      <td className={clsx("px-3 py-1.5 text-right font-mono", up ? "text-accent-buy" : "text-accent-sell")}>
-                        {up ? "+" : ""}{r.changePct.toFixed(2)}%
+                      <td className={clsx("px-3 py-1.5 text-right font-mono font-semibold", up ? "text-accent-buy" : "text-accent-sell")}>
+                        {ltp.toFixed(2)}
                       </td>
+                      <td className={clsx("px-3 py-1.5 text-right font-mono", up ? "text-accent-buy" : "text-accent-sell")}>
+                        {q?.change != null ? `${q.change >= 0 ? "+" : ""}${q.change.toFixed(2)}` : "—"}
+                      </td>
+                      <td className={clsx("px-3 py-1.5 text-right font-mono", up ? "text-accent-buy" : "text-accent-sell")}>
+                        {up ? "+" : ""}{chgPct.toFixed(2)}%
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono text-slate-300">{q?.open ? q.open.toFixed(2) : "—"}</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-slate-300">{q?.high ? q.high.toFixed(2) : "—"}</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-slate-300">{q?.low ? q.low.toFixed(2) : "—"}</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-slate-400">{q?.prev_close ? q.prev_close.toFixed(2) : "—"}</td>
                       <td className="px-3 py-1.5 text-right font-mono">{r.rsi14?.toFixed(1) ?? "—"}</td>
                       <td className={clsx("px-3 py-1.5 text-right font-mono", (r.macdHist ?? 0) >= 0 ? "text-accent-buy" : "text-accent-sell")}>{r.macdHist?.toFixed(3) ?? "—"}</td>
                       <td className="px-3 py-1.5 text-center font-mono">{r.supertrendDir ?? "—"}</td>
@@ -252,6 +338,7 @@ export default function ScannerPage() {
                 })}
               </tbody>
             </table>
+            </div>
           </section>
         )}
         </>}
@@ -409,8 +496,8 @@ function PatternScanTab() {
       }
       setRows(merged);
       setLastScanAt(Date.now());
-    } catch (err: any) {
-      setError(err?.response?.data?.error ?? err.message ?? "Scan failed");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Scan failed"));
     } finally {
       setRunning(false);
     }

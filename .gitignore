@@ -14,3 +14,7 @@ venv/
 .idea/
 coverage/
 .pytest_cache/
+# Trained-model binaries and market-data caches — regenerated on demand.
+ai-service/models/
+ai-service/data/history_cache/
+frontend/Untitled-*.ipynb

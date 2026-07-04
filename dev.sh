@@ -72,6 +72,12 @@ echo "  backend    → http://localhost:4000  (logs: $BE_LOG)"
   # always something for the chart to draw on the demo data.
   export PATTERN_ENGINE_REQUIRE_MARKET=false
   export PATTERN_ENGINE_MIN_EMIT_CONF=40
+  # Let the auto-trade loop execute against the mock feed around the clock
+  # (otherwise every order queues until NSE opens). Dev only.
+  export AUTOTRADE_REQUIRE_MARKET=false
+  # Move prices with a synthetic walk so the full auto-trade loop (open →
+  # stop/target → exit → trade) is exercisable when NSE is closed. Dev only.
+  export MOCK_FEED_SYNTHETIC=true
   nohup npm run dev > "$BE_LOG" 2>&1 &
 )
 

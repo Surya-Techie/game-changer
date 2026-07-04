@@ -31,7 +31,7 @@ export default function PaperAnalyticsPage() {
   }, []);
 
   return (
-    <div className="min-h-screen flex flex-col bg-app-radial text-slate-200">
+    <div className="min-h-full flex flex-col bg-app-radial text-slate-200">
       <PaperBanner />
       <Topbar symbol="Analytics" wsStatus="open" />
       <div className="flex-1 flex">
@@ -432,15 +432,6 @@ function ExportSection() {
           {busy ? "…" : "Download CSV"}
         </button>
       </div>
-    </div>
-  );
-}
-
-function Cell({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="bg-bg-elevated/40 border border-bg-border rounded p-2">
-      <div className="text-[10px] uppercase text-slate-500">{label}</div>
-      <div className="text-white">{value}</div>
     </div>
   );
 }

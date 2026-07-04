@@ -13,7 +13,7 @@ Exposes:
 from __future__ import annotations
 
 import os
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Tuple
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
@@ -177,7 +177,7 @@ def _yfinance_price(symbol: str) -> Optional[float]:
 
 
 try:
-    from nse_live import fetch_nse_ltp, fetch_nse_batch
+    from nse_live import fetch_nse_ltp, fetch_nse_batch, fetch_history
     _NSE_OK = True
 except Exception:
     _NSE_OK = False
@@ -208,6 +208,25 @@ def nse_live_batch(symbols: str = ""):
     if not syms:
         return {"available": True, "quotes": {}}
     return {"available": True, "quotes": fetch_nse_batch(syms)}
+
+
+@app.get("/history/{symbol}")
+def history(symbol: str, interval: str = "1m", period: str = "5d"):
+    """Real historical OHLCV candles (yfinance). Ascending epoch-ms bars.
+
+    The backend calls this at startup to seed its in-memory candle store
+    with REAL bars so signals are never computed on fabricated history.
+    """
+    if not _NSE_OK:
+        return {"symbol": symbol.upper(), "available": False, "candles": []}
+    candles = fetch_history(symbol, interval=interval, period=period)
+    return {
+        "symbol": symbol.upper(),
+        "interval": interval,
+        "period": period,
+        "available": len(candles) > 0,
+        "candles": candles,
+    }
 
 
 @app.get("/price/{symbol}")
@@ -258,12 +277,15 @@ class Candle(BaseModel):
 
 
 class StrategyToggles(BaseModel):
-    regimeFilter: bool = False
-    regimeMinAdx: float = 18.0
-    mtfConfirmation: bool = False
-    stopMode: Literal["ATR", "FIXED_PCT"] = "ATR"
-    stopPct: float = 2.0
-    targetRR: float = 2.0
+    # Every field is optional: only explicitly-sent values override the
+    # StrategyConfig defaults. A partial toggle payload (e.g. just the
+    # regime filter) must NOT silently reset exit geometry to old values.
+    regimeFilter: Optional[bool] = None
+    regimeMinAdx: Optional[float] = None
+    mtfConfirmation: Optional[bool] = None
+    stopMode: Optional[Literal["ATR", "FIXED_PCT"]] = None
+    stopPct: Optional[float] = None
+    targetRR: Optional[float] = None
 
 
 class SignalRequest(BaseModel):
@@ -284,16 +306,22 @@ class SignalResponse(BaseModel):
 
 
 def _cfg_from(t: Optional[StrategyToggles]) -> StrategyConfig:
+    cfg = StrategyConfig()
     if not t:
-        return StrategyConfig()
-    return StrategyConfig(
-        regime_filter=t.regimeFilter,
-        regime_min_adx=t.regimeMinAdx,
-        mtf_confirmation=t.mtfConfirmation,
-        stop_mode=t.stopMode,
-        stop_pct=t.stopPct,
-        target_rr=t.targetRR,
-    )
+        return cfg
+    if t.regimeFilter is not None:
+        cfg.regime_filter = t.regimeFilter
+    if t.regimeMinAdx is not None:
+        cfg.regime_min_adx = t.regimeMinAdx
+    if t.mtfConfirmation is not None:
+        cfg.mtf_confirmation = t.mtfConfirmation
+    if t.stopMode is not None:
+        cfg.stop_mode = t.stopMode
+    if t.stopPct is not None:
+        cfg.stop_pct = t.stopPct
+    if t.targetRR is not None:
+        cfg.target_rr = t.targetRR
+    return cfg
 
 
 @app.get("/health")
@@ -606,7 +634,9 @@ try:
     class PowerAnalysisRequest(BaseModel):
         symbol: str
         candles: List[Candle] = Field(..., min_length=80)
-        mode: Literal["strict", "loose"] = "strict"
+        # Single POWER decision rule. "strict"/"loose" are accepted for
+        # backward compatibility but map to the same rule now.
+        mode: Literal["power", "strict", "loose"] = "power"
         use_ml: bool = False
         # Target multiple of risk. 2.0 maximises win rate, 4.0 targets
         # ~4 % returns per winning trade. Anything outside [1.0, 6.0]
@@ -618,17 +648,56 @@ try:
         stop_pct: Optional[float] = Field(None, ge=0.1, le=20.0)
         target_pct: Optional[float] = Field(None, ge=0.1, le=30.0)
 
+    # Stampede control. A full scan is ~7 s of GIL-bound CPU; concurrent
+    # identical requests (page double-mounts, live reruns racing a slow
+    # response, multiple tabs) multiplied each other's latency until runs
+    # took 45–120 s and timed out. Identical requests now coalesce on a
+    # per-key lock and share one cached result; distinct scans are capped
+    # at 2 in flight so a burst queues instead of thrashing.
+    import threading as _threading
+    import time as _pa_time
+
+    _PA_CACHE: Dict[str, Tuple[dict, float]] = {}
+    _PA_LOCKS: Dict[str, _threading.Lock] = {}
+    _PA_META_LOCK = _threading.Lock()
+    _PA_SEM = _threading.BoundedSemaphore(2)
+    _PA_TTL = 90.0  # a bar-close rerun changes the key (new tail candle)
+
+    def _pa_key(req: PowerAnalysisRequest) -> str:
+        tail = req.candles[-1]
+        return (
+            f"{req.symbol}|{req.mode}|{req.use_ml}|{req.target_r}|"
+            f"{req.stop_pct}|{req.target_pct}|{len(req.candles)}|{tail.t}|{tail.c}"
+        )
+
     @app.post("/power-analysis")
     def power_analysis_endpoint(req: PowerAnalysisRequest) -> dict:
-        return run_power_analysis(
-            _candles_to_dicts(req.candles),
-            symbol=req.symbol,
-            mode=req.mode,
-            use_ml=req.use_ml,
-            target_r=req.target_r,
-            stop_pct=req.stop_pct,
-            target_pct=req.target_pct,
-        )
+        key = _pa_key(req)
+        hit = _PA_CACHE.get(key)
+        if hit and _pa_time.time() - hit[1] < _PA_TTL:
+            return hit[0]
+        with _PA_META_LOCK:
+            lock = _PA_LOCKS.setdefault(key, _threading.Lock())
+        with lock:
+            hit = _PA_CACHE.get(key)
+            if hit and _pa_time.time() - hit[1] < _PA_TTL:
+                return hit[0]
+            with _PA_SEM:
+                result = run_power_analysis(
+                    _candles_to_dicts(req.candles),
+                    symbol=req.symbol,
+                    mode=req.mode,
+                    use_ml=req.use_ml,
+                    target_r=req.target_r,
+                    stop_pct=req.stop_pct,
+                    target_pct=req.target_pct,
+                )
+            _PA_CACHE[key] = (result, _pa_time.time())
+            if len(_PA_CACHE) > 40:   # drop the oldest half, keep memory flat
+                for k in sorted(_PA_CACHE, key=lambda k: _PA_CACHE[k][1])[:20]:
+                    _PA_CACHE.pop(k, None)
+                    _PA_LOCKS.pop(k, None)
+            return result
 except Exception:  # noqa: BLE001
     pass
 
@@ -641,6 +710,10 @@ try:
         symbol: str
         candles: List[Candle] = Field(..., min_length=80)
         use_ml: bool = True
+        # When true, demand unanimous agreement + higher confidence floor +
+        # R:R ≥ 1.0. Trades far less often, but each trade has a higher
+        # measured win rate AND positive expectancy.
+        strict: bool = False
 
     @app.post("/high-conviction")
     def high_conviction_endpoint(req: HighConvictionRequest) -> dict:
@@ -648,6 +721,7 @@ try:
             _candles_to_dicts(req.candles),
             symbol=req.symbol,
             use_ml=req.use_ml,
+            strict=req.strict,
         )
 except Exception:  # noqa: BLE001
     pass
@@ -655,7 +729,34 @@ except Exception:  # noqa: BLE001
 
 # --- PPS (Pattern Probability Strategy) signal engine -----------------------
 try:
-    from pps_engine import generate_pps_signals, summarise as _pps_summarise  # type: ignore[import-not-found]
+    from pps_engine import (  # type: ignore[import-not-found]
+        generate_pps_signals,
+        summarise as _pps_summarise,
+        enrich_signals_with_accuracy as _pps_enrich,
+    )
+
+    def _pps_accuracy_lookup() -> dict:
+        """Build {canonical_pattern_name: {win_rate, samples}} from the
+        pattern-accuracy rollups, aggregated across timeframes. Empty when
+        Mongo is unavailable — the enrichment then no-ops gracefully."""
+        try:
+            from patterns.mongo_store import accuracy_summary, mongo_available  # type: ignore
+            if not mongo_available():
+                return {}
+            agg: dict = {}
+            for r in accuracy_summary():
+                name = r.get("pattern_name")
+                if not name:
+                    continue
+                a = agg.setdefault(name, {"wins": 0, "total": 0})
+                a["wins"] += int(r.get("wins") or 0)
+                a["total"] += int(r.get("total_detected") or 0)
+            return {
+                name: {"win_rate": v["wins"] / v["total"], "samples": v["total"]}
+                for name, v in agg.items() if v["total"] > 0
+            }
+        except Exception:  # noqa: BLE001
+            return {}
 
     class PpsBar(BaseModel):
         date: str
@@ -674,11 +775,56 @@ try:
     def pps_signals_endpoint(req: PpsRequest) -> dict:
         bars_in = [b.model_dump() for b in req.bars]
         signals = generate_pps_signals(bars_in)
+        # Analytics → PPS: fold measured pattern win rates onto the signals.
+        signals = _pps_enrich(signals, _pps_accuracy_lookup())
         return {
             "symbol": req.symbol,
             "timeframe": req.timeframe,
             "signals": signals,
             "summary": _pps_summarise(signals),
+        }
+
+    @app.post("/pps-signals/record")
+    def pps_record_endpoint(req: PpsRequest) -> dict:
+        """PPS → Analytics: resolve each historical PPS signal's outcome and
+        commit it to the pattern-accuracy store, so PPS patterns show up on
+        the Analytics page (and feed the Analytics → PPS read-back).
+
+        APPEND-ONLY / NOT idempotent: every call re-resolves and re-records
+        the supplied window. Intended for deliberate batch/backfill use
+        (scheduled job or admin action), NOT for per-refresh calls — that
+        would inflate the counts.
+        """
+        from pps_engine import resolve_pps_outcomes, normalise_timeframe  # type: ignore
+        bars_in = [b.model_dump() for b in req.bars]
+        signals = generate_pps_signals(bars_in)
+        resolved = resolve_pps_outcomes(signals, bars_in)
+        tf = normalise_timeframe(req.timeframe)
+        try:
+            from patterns.mongo_store import update_accuracy, mongo_available  # type: ignore
+            if not mongo_available():
+                return {"recorded": 0, "resolvable": len(resolved),
+                        "reason": "mongo unavailable", "timeframe": tf}
+        except Exception:  # noqa: BLE001
+            return {"recorded": 0, "resolvable": len(resolved), "reason": "store unavailable"}
+
+        recorded = wins = losses = 0
+        by_pattern: dict = {}
+        for r in resolved:
+            try:
+                update_accuracy(r["pattern_name"], tf, r["outcome"], r["rr_achieved"], r["hold_bars"])
+            except Exception:  # noqa: BLE001
+                continue
+            recorded += 1
+            wins += 1 if r["outcome"] == "win" else 0
+            losses += 1 if r["outcome"] == "loss" else 0
+            p = by_pattern.setdefault(r["pattern_name"], {"recorded": 0, "wins": 0})
+            p["recorded"] += 1
+            p["wins"] += 1 if r["outcome"] == "win" else 0
+        return {
+            "symbol": req.symbol, "timeframe": tf,
+            "recorded": recorded, "wins": wins, "losses": losses,
+            "by_pattern": by_pattern,
         }
 except Exception:  # noqa: BLE001 — pps_engine import is mandatory at runtime; this only protects boot under broken edits
     pass
@@ -719,6 +865,21 @@ try:
     @app.post("/sentiment")
     def sentiment_endpoint(req: SentimentRequest) -> dict:
         return {"items": [{"id": it.id, **classify(it.text)} for it in req.items]}
+except Exception:  # noqa: BLE001
+    pass
+
+
+# --- Live news-sentiment signal (real headlines) ------------------------------
+# Distinct from /sentiment (which scores arbitrary text): this pulls REAL
+# recent headlines for a symbol and returns a recency-weighted aggregate.
+# It is a context signal, NOT a backtested edge — see news_sentiment.py.
+try:
+    from news_sentiment import analyze_symbol as _news_analyze  # type: ignore[import-not-found]
+
+    @app.get("/news-sentiment/{symbol}")
+    def news_sentiment_endpoint(symbol: str, aliases: str = "") -> dict:
+        alias_list = [a.strip() for a in aliases.split(",") if a.strip()]
+        return _news_analyze(symbol, aliases=alias_list or None)
 except Exception:  # noqa: BLE001
     pass
 

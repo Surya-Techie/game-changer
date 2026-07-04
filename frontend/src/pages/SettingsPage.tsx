@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { useAuth } from "../store/auth";
 import { usePrefs } from "../store/prefs";
 import BrokerSection from "../components/BrokerSection";
+import { apiErrorMessage } from "../lib/errors";
 
 interface AutotradeSettings {
   autoTradeMode: "OFF" | "SEMI" | "AUTO";
@@ -68,6 +69,7 @@ export default function SettingsPage() {
       if (typeof s.autoRefreshSec === "number") setLocalRefresh(s.autoRefreshSec);
     });
     api.get("/api/2fa/status").then(({ data }) => setTwoFaEnabled(Boolean(data?.enabled)));
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, []);
 
   async function patch(patch: Partial<AutotradeSettings>) {
@@ -80,7 +82,7 @@ export default function SettingsPage() {
   if (!settings) return <div className="p-8 text-slate-400">Loading…</div>;
 
   return (
-    <div className="min-h-screen bg-app-radial text-slate-200">
+    <div className="min-h-full bg-app-radial text-slate-200">
       <header className="border-b border-bg-border bg-bg-panel-solid/60 backdrop-blur-glass px-6 py-4 flex justify-between items-center">
         <div>
           <Link to="/" className="text-xs text-slate-500 hover:text-white">← Dashboard</Link>
@@ -401,8 +403,8 @@ export default function SettingsPage() {
       const { data } = await api.post("/api/2fa/enroll");
       setQr(data.qr);
       setSecret(data.secret);
-    } catch (err: any) {
-      setTwofaError(err?.response?.data?.error ?? "Enroll failed");
+    } catch (err) {
+      setTwofaError(apiErrorMessage(err, "Enroll failed"));
     } finally {
       setBusy(false);
     }
@@ -417,8 +419,8 @@ export default function SettingsPage() {
       setTwoFaEnabled(true);
       setQr(null);
       setSecret(null);
-    } catch (err: any) {
-      setTwofaError(err?.response?.data?.error ?? "Verify failed");
+    } catch (err) {
+      setTwofaError(apiErrorMessage(err, "Verify failed"));
     } finally {
       setBusy(false);
     }
@@ -432,8 +434,8 @@ export default function SettingsPage() {
       setTwoFaEnabled(false);
       setCode("");
       setRecovery(null);
-    } catch (err: any) {
-      setTwofaError(err?.response?.data?.error ?? "Disable failed");
+    } catch (err) {
+      setTwofaError(apiErrorMessage(err, "Disable failed"));
     } finally {
       setBusy(false);
     }

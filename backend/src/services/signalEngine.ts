@@ -12,6 +12,7 @@ import {
 import { bus } from "./eventBus.js";
 import { logger } from "../utils/logger.js";
 import { redis } from "../db/redis.js";
+import { isMarketOpen } from "./paper/marketHours.js";
 
 /**
  * Phase 11 Layer-6 thresholds. Tunable via env so we can A/B the impact
@@ -43,12 +44,14 @@ async function getMergedStrategyToggles(): Promise<StrategyToggles> {
   const state = await AccountState.findOne({ autoTradeMode: { $ne: "OFF" } }).lean();
   if (!state) return {};
   return {
+    // Entry filters are shared with the auto-trader…
     regimeFilter: state.regimeFilterEnabled,
     regimeMinAdx: state.regimeMinAdx,
     mtfConfirmation: state.mtfConfirmation,
-    stopMode: state.stopMode as "ATR" | "FIXED_PCT",
-    stopPct: state.stopPct,
-    targetRR: state.targetRR,
+    // …but exit geometry is NOT: emitted signals always use the AI
+    // service's accuracy-profile stop/target (what the measured hit rate
+    // is tracked against). The auto-trader re-derives its own trade
+    // target from the account's stopMode / stopPct / targetRR.
   };
 }
 
@@ -135,6 +138,16 @@ async function applyPatternLayer(
 
 
 async function tick() {
+  // Only generate signals from moving prices. During market hours the feed
+  // carries real NSE ticks ("live"); in dev the synthetic walk can be enabled
+  // ("synthetic"). Outside both, prices are frozen at the last close —
+  // evaluating indicators on a flat line produces junk signals that then sit
+  // PENDING for 2h and expire, so we skip entirely.
+  const syntheticEnabled = (process.env.MOCK_FEED_SYNTHETIC ?? "false").toLowerCase() === "true";
+  const live = mockFeed.isLive() && isMarketOpen();
+  if (!live && !syntheticEnabled) return;
+  const dataSource: "live" | "synthetic" = live ? "live" : "synthetic";
+
   const symbols = mockFeed.symbols();
   const strategy = await getMergedStrategyToggles();
   for (const symbol of symbols) {
@@ -162,6 +175,7 @@ async function tick() {
         suggestedStop: ai.suggestedStop,
         suggestedTarget: ai.suggestedTarget,
         pattern_confirmation: layer6.pattern_confirmation ?? undefined,
+        dataSource,
       });
       await redis.set(`signal:latest:${symbol}`, JSON.stringify(doc), "EX", 600);
       bus.emit("signal", {
@@ -174,6 +188,7 @@ async function tick() {
         suggestedStop: ai.suggestedStop,
         suggestedTarget: ai.suggestedTarget,
         reason: ai.reason,
+        dataSource,
         pattern_confirmation: layer6.pattern_confirmation ?? undefined,
       });
     } catch (err) {

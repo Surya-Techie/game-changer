@@ -1,4 +1,17 @@
+// ⚠️ REFERENCE FIGURES — NOT MEASURED ON YOUR DATA.
+//
+// These win rates are textbook/literature reliability estimates for each
+// chart pattern (e.g. Bulkowski-style studies). They are static constants,
+// NOT computed from this system's detections or backtests. They exist to
+// give a rough prior next to a freshly-detected pattern.
+//
+// For win rates ACTUALLY measured by this engine (with real sample sizes),
+// see the Pattern Analytics page / the "Accuracy" tab, which reads the
+// pattern-accuracy rollups the backend resolves from live outcomes.
+//
+// The UI must label these as "ref" — never as measured "accuracy".
 export interface PatternMeta {
+  /** Reference reliability % from TA literature — NOT measured here. */
   winRate: number;
   direction: "bullish" | "bearish" | "continuation" | "neutral";
   name: string;
@@ -49,7 +62,7 @@ export function getPatternAdvice(patternName: string, fallbackDirection: string 
   const meta = match ? PATTERN_WIN_RATES[match] : null;
 
   const winRate = meta ? meta.winRate : 50.0;
-  const direction = meta ? meta.direction : (fallbackDirection.toLowerCase() as any);
+  const direction = meta ? meta.direction : (fallbackDirection.toLowerCase() as PatternMeta["direction"]);
 
   let strengthText = "";
   let badgeClass = "";
@@ -58,27 +71,27 @@ export function getPatternAdvice(patternName: string, fallbackDirection: string 
   let adviceMsg = "";
 
   if (direction === "bullish") {
-    strengthText = `${winRate}% BUY`;
+    strengthText = `~${winRate}% BUY`;
     badgeClass = winRate >= 75
       ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
       : "bg-emerald-500/10 text-emerald-400/90 border-emerald-500/20";
     textColor = "text-emerald-400";
     barColor = "bg-emerald-500";
-    adviceMsg = `Bullish pattern detected. Historical accuracy is ${winRate}% for upward movement.`;
+    adviceMsg = `Bullish pattern detected. Reference reliability ~${winRate}% (TA literature, not measured on your data).`;
   } else if (direction === "bearish") {
-    strengthText = `${winRate}% SELL`;
+    strengthText = `~${winRate}% SELL`;
     badgeClass = winRate >= 75
       ? "bg-rose-500/20 text-rose-400 border-rose-500/30"
       : "bg-rose-500/10 text-rose-400/90 border-rose-500/20";
     textColor = "text-rose-400";
     barColor = "bg-rose-500";
-    adviceMsg = `Bearish pattern detected. Historical accuracy is ${winRate}% for downward movement.`;
+    adviceMsg = `Bearish pattern detected. Reference reliability ~${winRate}% (TA literature, not measured on your data).`;
   } else {
-    strengthText = `${winRate}% NEUTRAL`;
+    strengthText = `~${winRate}% NEUTRAL`;
     badgeClass = "bg-slate-500/15 text-slate-400 border-slate-500/20";
     textColor = "text-slate-400";
     barColor = "bg-slate-500";
-    adviceMsg = `Neutral pattern detected with ${winRate}% historical consistency.`;
+    adviceMsg = `Neutral pattern detected. Reference reliability ~${winRate}% (TA literature, not measured on your data).`;
   }
 
   return {

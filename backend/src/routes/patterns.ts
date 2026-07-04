@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/admin.js";
-import { getCandles } from "../services/candleAggregator.js";
+import { getCandlesSmart } from "../services/candleAggregator.js";
 import {
   detectPatterns,
   fetchPatternAccuracy,
@@ -137,7 +137,7 @@ router.get("/scan", async (req, res, next) => {
 // the same prices the pattern detector ran against — required for the
 // entry/SL/TP price lines to land on-screen alongside the candles.
 
-const CHART_TIMEFRAMES = ["M1", "M5", "M15", "H1", "D1", "Y1"] as const;
+const CHART_TIMEFRAMES = ["M1", "M5", "M15", "M30", "H1", "D1", "Y1"] as const;
 const ohlcvQuerySchema = z.object({
   timeframe: z.enum(CHART_TIMEFRAMES as unknown as [string, ...string[]]).default("D1"),
   limit: z.coerce.number().int().min(20).max(2000).default(300),
@@ -161,6 +161,21 @@ router.get("/accuracy", async (_req, res, next) => {
   try {
     const data = await fetchPatternAccuracy();
     if (!data) return res.status(502).json({ error: "ai service unavailable" });
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── /api/patterns/calibration — measured per-pattern performance ────────
+// Walk-forward event-study stats (win rate, expectancy, verdict) that the
+// AI confidence engine is calibrated against. Read-only, cached upstream.
+
+router.get("/calibration", async (_req, res, next) => {
+  try {
+    const axios = (await import("axios")).default;
+    const { env } = await import("../config/env.js");
+    const { data } = await axios.get(`${env.aiServiceUrl}/patterns/calibration`, { timeout: 10_000 });
     res.json(data);
   } catch (err) {
     next(err);
@@ -330,7 +345,7 @@ router.get("/:symbol", async (req, res, next) => {
   try {
     const symbol = symbolSchema.parse(req.params.symbol);
     const limit = Math.min(Number(req.query.limit ?? 200), 1000);
-    const candles = getCandles(symbol, limit);
+    const candles = await getCandlesSmart(symbol, limit);
     if (candles.length < 30) return res.json({ symbol, detections: [] });
     const detections = await getPatterns(symbol, candles);
     res.json({ symbol, candles: candles.map((c) => c.t), detections });

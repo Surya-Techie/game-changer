@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Literal, Optional
@@ -62,8 +63,8 @@ router = APIRouter(prefix="/patterns", tags=["patterns"])
 # without overwhelming yfinance's informal rate limit.
 _EXECUTOR = ThreadPoolExecutor(max_workers=6, thread_name_prefix="qti-pattern-fetch")
 
-_VALID_TIMEFRAMES = ("M5", "M15", "H1", "D1")
-TimeframeLit = Literal["M5", "M15", "H1", "D1"]
+_VALID_TIMEFRAMES = ("M1", "M5", "M15", "M30", "H1", "D1")
+TimeframeLit = Literal["M1", "M5", "M15", "M30", "H1", "D1"]
 
 
 # ─── yfinance helper (cached briefly to avoid back-to-back hits) ────────
@@ -71,16 +72,26 @@ TimeframeLit = Literal["M5", "M15", "H1", "D1"]
 _TF_TO_YF = {
     "D1": {"period": "1y", "interval": "1d"},
     "H1": {"period": "60d", "interval": "1h"},
+    "M30": {"period": "60d", "interval": "30m"},
     "M15": {"period": "30d", "interval": "15m"},
     "M5": {"period": "15d", "interval": "5m"},
-    # Chart-only timeframes — pattern detection doesn't run on these,
-    # the OHLCV endpoint exposes them for the live chart picker.
     "M1": {"period": "7d", "interval": "1m"},
+    # Chart-only extra — exposed by the OHLCV endpoint for the chart picker.
     "Y1": {"period": "5y", "interval": "1wk"},
 }
 
 # When the caller asks for tfX, this is the higher-tf we fetch for MTF.
-_HIGHER_TF = {"M5": "M15", "M15": "H1", "H1": "D1", "D1": None}
+_HIGHER_TF = {"M1": "M5", "M5": "M15", "M15": "M30", "M30": "H1", "H1": "D1", "D1": None}
+
+
+# OHLCV cache: successes are reusable for a couple of minutes (patterns on
+# a 15m/H1/D1 bar barely move between polls), and FAILURES back off for two
+# minutes — the pattern engine polls 20 symbols × 4 timeframes, and retrying
+# a rate-limited Yahoo every cycle is exactly what keeps it rate-limited.
+_ohlcv_cache: dict[str, tuple[Optional[pd.DataFrame], float]] = {}
+_ohlcv_lock = threading.Lock()
+_OHLCV_OK_TTL = 90.0
+_OHLCV_FAIL_TTL = 120.0
 
 
 def _fetch_ohlcv(symbol: str, timeframe: str) -> Optional[pd.DataFrame]:
@@ -94,20 +105,58 @@ def _fetch_ohlcv(symbol: str, timeframe: str) -> Optional[pd.DataFrame]:
     params = _TF_TO_YF.get(timeframe)
     if params is None:
         return None
-    try:
-        hist = yf.Ticker(sym).history(period=params["period"], interval=params["interval"], auto_adjust=False)
-    except Exception:  # noqa: BLE001
-        return None
+
+    key = f"{sym}|{timeframe}"
+    now = time.time()
+    with _ohlcv_lock:
+        hit = _ohlcv_cache.get(key)
+        if hit is not None:
+            df_cached, at = hit
+            ttl = _OHLCV_OK_TTL if df_cached is not None else _OHLCV_FAIL_TTL
+            if now - at < ttl:
+                return df_cached.copy() if df_cached is not None else None
+
+    def _pull(ticker: str):
+        try:
+            return yf.Ticker(ticker).history(period=params["period"], interval=params["interval"], auto_adjust=False)
+        except Exception:  # noqa: BLE001
+            return None
+
+    hist = _pull(sym)
     if hist is None or hist.empty:
+        # BSE lines are often empty on Yahoo — try the NSE twin (and vice
+        # versa) before declaring the symbol dataless.
+        twin = None
+        if not sym.startswith("^"):
+            twin = sym[:-3] + ".NS" if sym.endswith(".BO") else sym[:-3] + ".BO"
+        hist = _pull(twin) if twin else None
+    if hist is None or hist.empty:
+        with _ohlcv_lock:
+            _ohlcv_cache[key] = (None, now)
         return None
     df = hist.rename(columns={
         "Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume",
     })[["open", "high", "low", "close", "volume"]].copy()
+    # Drop rows with missing OHLC — yfinance emits NaN rows for illiquid
+    # sessions and they poison detectors + JSON serialization downstream.
+    df = df.dropna(subset=["open", "high", "low", "close"])
+    if df.empty:
+        with _ohlcv_lock:
+            _ohlcv_cache[key] = (None, now)
+        return None
     idx = df.index
     if idx.tz is not None:
         idx = idx.tz_convert('UTC').tz_localize(None)
     df["time"] = idx.astype('datetime64[ms]').astype('int64')
-    return df.reset_index(drop=True)
+    out = df.reset_index(drop=True)
+    with _ohlcv_lock:
+        _ohlcv_cache[key] = (out, now)
+        # Keep the cache bounded (20 symbols × 4 TFs ≈ 80 keys normally).
+        if len(_ohlcv_cache) > 400:
+            oldest = sorted(_ohlcv_cache.items(), key=lambda kv: kv[1][1])[:100]
+            for k, _ in oldest:
+                _ohlcv_cache.pop(k, None)
+    return out.copy()
 
 
 # ─── Pydantic models ───────────────────────────────────────────────────────
@@ -371,7 +420,7 @@ def history(symbol: str, limit: int = Query(200, ge=1, le=500)) -> HistoryRespon
 # the same yfinance fetch used by the detector so chart prices line up
 # with the pattern's entry/SL/TP — using mock-feed candles produces a
 # scale mismatch where the price lines hang off-screen.
-_OHLCV_TIMEFRAMES = ("M1", "M5", "M15", "H1", "D1", "Y1")
+_OHLCV_TIMEFRAMES = ("M1", "M5", "M15", "M30", "H1", "D1", "Y1")
 
 
 @router.get("/ohlcv/{symbol}")
@@ -408,6 +457,49 @@ def accuracy() -> AccuracyResponse:
     if not mongo_available():
         return AccuracyResponse(available=False, rollups=[])
     return AccuracyResponse(available=True, rollups=accuracy_summary())
+
+
+@router.get("/calibration")
+def calibration() -> dict:
+    """Measured per-pattern performance from the walk-forward event study
+    (see patterns/calibration.json). This is what grounds the confidence
+    engine's measured-performance component. Each entry gets a verdict:
+      TRADEABLE  — expectancy ≥ +0.05R on ≥15 samples
+      MARGINAL   — |expectancy| < 0.05R or thin sample
+      AVOID      — expectancy < −0.05R on ≥15 samples (confidence-penalised)
+    """
+    import json as _json
+    import os as _os
+
+    path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "patterns", "calibration.json")
+    if not _os.path.exists(path):
+        return {"available": False, "meta": None, "patterns": []}
+    with open(path) as f:
+        raw = _json.load(f)
+    meta = raw.get("_meta")
+    patterns = []
+    for name, c in raw.items():
+        if name.startswith("_") or not isinstance(c, dict):
+            continue
+        n = int(c.get("samples", 0))
+        exp = float(c.get("expectancy_r", 0.0))
+        if n >= 15 and exp >= 0.05:
+            verdict = "TRADEABLE"
+        elif n >= 15 and exp <= -0.05:
+            verdict = "AVOID"
+        else:
+            verdict = "MARGINAL"
+        patterns.append({
+            "pattern_name": name,
+            "win_rate": c.get("win_rate"),
+            "expectancy_r": exp,
+            "samples": n,
+            "resolved": c.get("resolved"),
+            "expired": c.get("expired"),
+            "verdict": verdict,
+        })
+    patterns.sort(key=lambda p: -p["expectancy_r"])
+    return {"available": True, "meta": meta, "patterns": patterns}
 
 
 @router.post("/feedback")

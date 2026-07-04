@@ -33,6 +33,7 @@ export default function Chart({ candles, liveCandle, onChartReady, onChartTeardo
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const lastBarSecRef = useRef(0);
   const theme = usePrefs((s) => s.theme);
 
   useEffect(() => {
@@ -104,27 +105,41 @@ export default function Chart({ candles, liveCandle, onChartReady, onChartTeardo
   useEffect(() => {
     const series = seriesRef.current;
     if (!series) return;
-    const data: CandlestickData[] = candles.map((c) => ({
-      time: Math.floor(c.t / 1000) as UTCTimestamp,
-      open: c.o,
-      high: c.h,
-      low: c.l,
-      close: c.c,
-    }));
+    // Defensive: lightweight-charts hard-asserts (and takes the whole page
+    // down via the error boundary) if data isn't strictly ascending by time.
+    // Sort + dedupe (last write wins) so a glitchy feed can never crash the
+    // dashboard — worst case one candle renders merged.
+    const byTime = new Map<number, ChartCandle>();
+    for (const c of candles) byTime.set(Math.floor(c.t / 1000), c);
+    const data: CandlestickData[] = [...byTime.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([sec, c]) => ({
+        time: sec as UTCTimestamp,
+        open: c.o,
+        high: c.h,
+        low: c.l,
+        close: c.c,
+      }));
     series.setData(data);
+    lastBarSecRef.current = data.length ? (data[data.length - 1]!.time as number) : 0;
     chartRef.current?.timeScale().fitContent();
   }, [candles]);
 
   // Live update for the in-progress candle.
   useEffect(() => {
     if (!liveCandle || !seriesRef.current) return;
+    const sec = Math.floor(liveCandle.t / 1000);
+    // series.update() throws on out-of-order times too — ignore stale ticks.
+    if (sec < lastBarSecRef.current) return;
+    lastBarSecRef.current = sec;
     seriesRef.current.update({
-      time: Math.floor(liveCandle.t / 1000) as UTCTimestamp,
+      time: sec as UTCTimestamp,
       open: liveCandle.o,
       high: liveCandle.h,
       low: liveCandle.l,
       close: liveCandle.c,
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, [liveCandle?.t, liveCandle?.c, liveCandle?.h, liveCandle?.l]);
 
   return <div ref={containerRef} className="w-full h-full" />;

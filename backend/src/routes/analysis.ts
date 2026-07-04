@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
-import { getCandles } from "../services/candleAggregator.js";
+import { getCandlesSmart } from "../services/candleAggregator.js";
 import { getCandlestickPatterns, getLevels, getMtfSummary } from "../services/aiClient.js";
 
 const router = Router();
@@ -10,7 +10,7 @@ router.get("/candlestick/:symbol", async (req, res, next) => {
   try {
     const symbol = req.params.symbol.toUpperCase();
     const lookback = Math.min(Math.max(Number(req.query.lookback ?? 30), 5), 200);
-    const candles = getCandles(symbol, Math.max(lookback + 20, 100));
+    const candles = await getCandlesSmart(symbol, Math.max(lookback + 20, 100));
     if (candles.length < 5) return res.json({ symbol, patterns: [] });
     const out = await getCandlestickPatterns(symbol, candles, lookback);
     if (!out) return res.status(502).json({ error: "AI service unavailable" });
@@ -41,7 +41,7 @@ router.post("/candlestick", async (req, res, next) => {
 router.get("/levels/:symbol", async (req, res, next) => {
   try {
     const symbol = req.params.symbol.toUpperCase();
-    const candles = getCandles(symbol, 1000);
+    const candles = await getCandlesSmart(symbol, 1000);
     if (candles.length < 30) return res.json({ symbol, error: "not enough history" });
     const out = await getLevels(symbol, candles);
     if (!out) return res.status(502).json({ error: "AI service unavailable" });
@@ -54,7 +54,7 @@ router.get("/levels/:symbol", async (req, res, next) => {
 router.get("/mtf/:symbol", async (req, res, next) => {
   try {
     const symbol = req.params.symbol.toUpperCase();
-    const candles = getCandles(symbol, 1000);
+    const candles = await getCandlesSmart(symbol, 1000);
     if (candles.length < 30) return res.json({ symbol, error: "not enough history" });
     const out = await getMtfSummary(symbol, candles);
     if (!out) return res.status(502).json({ error: "AI service unavailable" });

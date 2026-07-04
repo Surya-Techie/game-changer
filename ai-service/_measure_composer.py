@@ -23,6 +23,54 @@ SYMBOLS = [
     "ICICIBANK.NS", "ITC.NS", "SBIN.NS", "LT.NS",
 ]
 
+# Round-trip trading cost as a % of notional, deducted from EVERY trade's
+# return so the reported edge is net, not gross. 2 bps slippage/side +
+# ~0.03% brokerage/side + STT/charges ≈ 0.10% round-trip for NSE intraday.
+# Win rate ignores this entirely — expectancy does not, which is the point.
+ROUND_TRIP_COST_PCT = 0.10
+
+
+def _expectancy_stats(pnl_pcts: list[float]) -> dict:
+    """Turn a list of per-trade %-returns (net of cost) into the metrics
+    that actually decide profitability — not just win rate.
+
+    - expectancy  : average % gained per trade (the single number that
+                    determines whether the edge compounds or bleeds).
+    - profit_factor: gross wins / gross losses. >1 = profitable, and it
+                    can be <1 even at an 80% win rate if the losers are big.
+    - max_drawdown: worst peak-to-trough on the cumulative-return curve.
+    - max_consec_losses: tail-risk / psychological survivability.
+    """
+    if not pnl_pcts:
+        return {"expectancy_pct": 0.0, "profit_factor": 0.0,
+                "max_drawdown_pct": 0.0, "max_consec_losses": 0}
+    wins = [p for p in pnl_pcts if p > 0]
+    losses = [p for p in pnl_pcts if p <= 0]
+    gross_win = sum(wins)
+    gross_loss = abs(sum(losses))
+    profit_factor = (gross_win / gross_loss) if gross_loss > 1e-9 else (99.0 if gross_win > 0 else 0.0)
+    expectancy = sum(pnl_pcts) / len(pnl_pcts)
+    # Max drawdown on the cumulative (sum) equity curve, in % points.
+    cum = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    consec = max_consec = 0
+    for p in pnl_pcts:
+        cum += p
+        peak = max(peak, cum)
+        max_dd = max(max_dd, peak - cum)
+        if p <= 0:
+            consec += 1
+            max_consec = max(max_consec, consec)
+        else:
+            consec = 0
+    return {
+        "expectancy_pct": round(expectancy, 3),
+        "profit_factor": round(profit_factor, 2),
+        "max_drawdown_pct": round(max_dd, 2),
+        "max_consec_losses": max_consec,
+    }
+
 
 def fetch(symbol: str, period: str = "2y") -> list[dict]:
     df = yf.Ticker(symbol).history(period=period, interval="1d")
@@ -93,6 +141,7 @@ def measure_symbol(symbol: str) -> dict:
         res = compose_high_conviction(
             sub, symbol=symbol.replace(".NS", ""), use_ml=False,
             tradeable_universe=set(),  # disable universe gate for measurement
+            strict="--strict" in sys.argv,
         )
         if res["signal"] in ("BUY", "SELL"):
             signals_emitted.append((i, res))
@@ -110,11 +159,15 @@ def measure_symbol(symbol: str) -> dict:
             deduped.append((idx, r))
             last_idx = idx
 
+    # `wins/losses` track the target-vs-stop outcome (the "win rate").
+    # `pnl_pcts` are NET of round-trip cost — so expectancy/profit-factor
+    # below reflect what the edge is actually worth after frictions. The
+    # gap between the two is the whole reason win rate alone is misleading.
     wins = losses = 0
     pnl_pcts: list[float] = []
     for idx, r in deduped:
         outcome, ret = resolve(r, candles, idx)
-        pnl_pcts.append(ret * 100)
+        pnl_pcts.append(ret * 100 - ROUND_TRIP_COST_PCT)
         if outcome == "win":
             wins += 1
         else:
@@ -123,8 +176,9 @@ def measure_symbol(symbol: str) -> dict:
     total = wins + losses
     win_rate = (wins / total * 100) if total else 0.0
     avg_ret = sum(pnl_pcts) / len(pnl_pcts) if pnl_pcts else 0.0
-    avg_win = (sum(p for p in pnl_pcts if p > 0) / wins) if wins else 0.0
-    avg_loss = (sum(p for p in pnl_pcts if p <= 0) / losses) if losses else 0.0
+    avg_win = (sum(p for p in pnl_pcts if p > 0) / max(1, sum(1 for p in pnl_pcts if p > 0)))
+    avg_loss = (sum(p for p in pnl_pcts if p <= 0) / max(1, sum(1 for p in pnl_pcts if p <= 0)))
+    stats = _expectancy_stats(pnl_pcts)
     return {
         "symbol": symbol,
         "candles": len(candles),
@@ -137,6 +191,8 @@ def measure_symbol(symbol: str) -> dict:
         "avg_loss_pct": round(avg_loss, 2),
         "avg_pct_per_trade": round(avg_ret, 3),
         "total_pct_if_all_taken": round(sum(pnl_pcts), 2),
+        "pnl_pcts": pnl_pcts,
+        **stats,
     }
 
 
@@ -159,23 +215,41 @@ def main() -> None:
             print(f"{sym:<14} no signals")
             continue
         print(f"{sym:<14} n={r['deduped_signals']:>3}  "
-              f"W/L={r['wins']}/{r['losses']}  "
               f"win%={r['win_rate_pct']:>5.1f}  "
-              f"avgWin={r['avg_win_pct']:+.2f}%  "
-              f"avgLoss={r['avg_loss_pct']:+.2f}%  "
-              f"avg/trade={r['avg_pct_per_trade']:+.2f}%  "
-              f"sum={r['total_pct_if_all_taken']:+.1f}%")
+              f"exp={r['expectancy_pct']:+.2f}%  "
+              f"PF={r['profit_factor']:>4.2f}  "
+              f"maxDD={r['max_drawdown_pct']:>5.1f}%  "
+              f"maxLossStreak={r['max_consec_losses']:>2}  "
+              f"netSum={r['total_pct_if_all_taken']:+.1f}%")
 
-    # Aggregate.
-    tot_wins = sum(r.get("wins", 0) for r in rows if "wins" in r)
-    tot_losses = sum(r.get("losses", 0) for r in rows if "losses" in r)
+    # Aggregate — pool every trade so expectancy/profit-factor are computed
+    # on the full sample, net of cost.
+    scored = [r for r in rows if "wins" in r]
+    tot_wins = sum(r["wins"] for r in scored)
+    tot_losses = sum(r["losses"] for r in scored)
     tot_closed = tot_wins + tot_losses
     overall_win = (tot_wins / tot_closed * 100) if tot_closed else 0.0
-    tot_pct = sum(r.get("total_pct_if_all_taken", 0) for r in rows if "wins" in r)
+    all_pnl: list[float] = []
+    for r in scored:
+        all_pnl.extend(r.get("pnl_pcts", []))
+    agg = _expectancy_stats(all_pnl)
+    tot_pct = sum(all_pnl)
     print("-" * 90)
-    print(f"AGGREGATE: {tot_closed} trades across {len([r for r in rows if 'wins' in r])} symbols")
-    print(f"  overall win rate: {overall_win:.1f}% ({tot_wins}W / {tot_losses}L)")
-    print(f"  total return if all 8 symbols traded equally: {tot_pct:+.1f}%")
+    print(f"AGGREGATE: {tot_closed} trades across {len(scored)} symbols "
+          f"(net of {ROUND_TRIP_COST_PCT:.2f}% round-trip cost)")
+    print(f"  win rate          : {overall_win:.1f}%  ({tot_wins}W / {tot_losses}L)")
+    print(f"  expectancy/trade  : {agg['expectancy_pct']:+.3f}%   <- the number that actually compounds")
+    print(f"  profit factor     : {agg['profit_factor']:.2f}      (>1 = profitable; can be <1 even at 80% win rate)")
+    print(f"  max drawdown      : {agg['max_drawdown_pct']:.1f}%")
+    print(f"  max loss streak   : {agg['max_consec_losses']}")
+    print(f"  total net return  : {tot_pct:+.1f}%")
+    verdict = (
+        "POSITIVE expectancy — edge survives costs." if agg["expectancy_pct"] > 0
+        else "NEGATIVE expectancy — win rate is a mirage; this bleeds after costs."
+    )
+    print(f"  VERDICT: {verdict}")
+    print("  NOTE: a high win rate with profit_factor <= 1 means small wins / big "
+          "losses — it loses money. Always read win rate WITH expectancy + PF.")
 
 
 if __name__ == "__main__":

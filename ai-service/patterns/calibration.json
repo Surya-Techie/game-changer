@@ -1,0 +1,351 @@
+{
+ "_meta": {
+  "source": "walk-forward event study, 12 NSE symbols (8 in-sample + 4 held-out), 2y daily + 60d 15m bars",
+  "generated": "2026-07-03",
+  "method": "entry next-bar open +3bps slippage, target/stop race, 20-bar max hold, win rate shrunk toward 0.5 with 10 pseudo-samples",
+  "total_trades": 1633
+ },
+ "Ascending Triangle": {
+  "win_rate": 0.5882,
+  "expectancy_r": 0.1596,
+  "samples": 17,
+  "resolved": 7,
+  "expired": 10
+ },
+ "Bear Flag": {
+  "win_rate": 0.3333,
+  "expectancy_r": -1.0,
+  "samples": 5,
+  "resolved": 5,
+  "expired": 0
+ },
+ "Bear Pennant": {
+  "win_rate": 0.4545,
+  "expectancy_r": 0.7939,
+  "samples": 2,
+  "resolved": 1,
+  "expired": 1
+ },
+ "Bearish Breaker Block": {
+  "win_rate": 0.5,
+  "expectancy_r": 0.3963,
+  "samples": 11,
+  "resolved": 6,
+  "expired": 5
+ },
+ "Bearish Consolidation Breakout": {
+  "win_rate": 0.3117,
+  "expectancy_r": -0.0434,
+  "samples": 103,
+  "resolved": 67,
+  "expired": 36
+ },
+ "Bearish Fair Value Gap": {
+  "win_rate": 0.4038,
+  "expectancy_r": -0.0602,
+  "samples": 78,
+  "resolved": 42,
+  "expired": 36
+ },
+ "Bearish Fakey": {
+  "win_rate": 0.5,
+  "expectancy_r": 0.8412,
+  "samples": 6,
+  "resolved": 6,
+  "expired": 0
+ },
+ "Bearish Inducement": {
+  "win_rate": 0.4615,
+  "expectancy_r": 0.371,
+  "samples": 4,
+  "resolved": 3,
+  "expired": 1
+ },
+ "Bearish Liquidity Sweep": {
+  "win_rate": 0.4615,
+  "expectancy_r": -0.063,
+  "samples": 4,
+  "resolved": 3,
+  "expired": 1
+ },
+ "Bearish Mitigation Block": {
+  "win_rate": 0.3529,
+  "expectancy_r": -0.4947,
+  "samples": 7,
+  "resolved": 7,
+  "expired": 0
+ },
+ "Bearish OTE": {
+  "win_rate": 0.4688,
+  "expectancy_r": -0.1843,
+  "samples": 28,
+  "resolved": 22,
+  "expired": 6
+ },
+ "Bearish Order Block": {
+  "win_rate": 0.5593,
+  "expectancy_r": 0.02,
+  "samples": 53,
+  "resolved": 49,
+  "expired": 4
+ },
+ "Bearish Pin Bar": {
+  "win_rate": 0.4118,
+  "expectancy_r": 0.2976,
+  "samples": 61,
+  "resolved": 58,
+  "expired": 3
+ },
+ "Bearish Power of 3": {
+  "win_rate": 0.5556,
+  "expectancy_r": -0.0384,
+  "samples": 25,
+  "resolved": 17,
+  "expired": 8
+ },
+ "Bearish Wide Range Bar": {
+  "win_rate": 0.5244,
+  "expectancy_r": -0.062,
+  "samples": 82,
+  "resolved": 72,
+  "expired": 10
+ },
+ "Bull Flag": {
+  "win_rate": 0.4167,
+  "expectancy_r": -1.0,
+  "samples": 2,
+  "resolved": 2,
+  "expired": 0
+ },
+ "Bull Pennant": {
+  "win_rate": 0.4545,
+  "expectancy_r": -1.0,
+  "samples": 1,
+  "resolved": 1,
+  "expired": 0
+ },
+ "Bullish Breaker Block": {
+  "win_rate": 0.5333,
+  "expectancy_r": 0.6435,
+  "samples": 6,
+  "resolved": 5,
+  "expired": 1
+ },
+ "Bullish Consolidation Breakout": {
+  "win_rate": 0.3377,
+  "expectancy_r": 0.013,
+  "samples": 110,
+  "resolved": 67,
+  "expired": 43
+ },
+ "Bullish Fair Value Gap": {
+  "win_rate": 0.4848,
+  "expectancy_r": -0.1072,
+  "samples": 53,
+  "resolved": 23,
+  "expired": 30
+ },
+ "Bullish Fakey": {
+  "win_rate": 0.4615,
+  "expectancy_r": 0.6542,
+  "samples": 4,
+  "resolved": 3,
+  "expired": 1
+ },
+ "Bullish Inducement": {
+  "win_rate": 0.4286,
+  "expectancy_r": -0.1118,
+  "samples": 5,
+  "resolved": 4,
+  "expired": 1
+ },
+ "Bullish Island Reversal": {
+  "win_rate": 0.5833,
+  "expectancy_r": 0.0849,
+  "samples": 2,
+  "resolved": 2,
+  "expired": 0
+ },
+ "Bullish Liquidity Sweep": {
+  "win_rate": 0.4167,
+  "expectancy_r": -0.4623,
+  "samples": 4,
+  "resolved": 2,
+  "expired": 2
+ },
+ "Bullish Mitigation Block": {
+  "win_rate": 0.4,
+  "expectancy_r": -0.1955,
+  "samples": 6,
+  "resolved": 5,
+  "expired": 1
+ },
+ "Bullish OTE": {
+  "win_rate": 0.5128,
+  "expectancy_r": 0.1664,
+  "samples": 38,
+  "resolved": 29,
+  "expired": 9
+ },
+ "Bullish Order Block": {
+  "win_rate": 0.6667,
+  "expectancy_r": 0.1603,
+  "samples": 31,
+  "resolved": 29,
+  "expired": 2
+ },
+ "Bullish Pin Bar": {
+  "win_rate": 0.4203,
+  "expectancy_r": 0.1765,
+  "samples": 61,
+  "resolved": 59,
+  "expired": 2
+ },
+ "Bullish Power of 3": {
+  "win_rate": 0.5238,
+  "expectancy_r": -0.2192,
+  "samples": 19,
+  "resolved": 11,
+  "expired": 8
+ },
+ "Bullish Wide Range Bar": {
+  "win_rate": 0.5556,
+  "expectancy_r": -0.015,
+  "samples": 91,
+  "resolved": 80,
+  "expired": 11
+ },
+ "Bump and Run Reversal": {
+  "win_rate": 0.5714,
+  "expectancy_r": -0.1187,
+  "samples": 5,
+  "resolved": 4,
+  "expired": 1
+ },
+ "Descending Triangle": {
+  "win_rate": 0.4667,
+  "expectancy_r": 0.3743,
+  "samples": 13,
+  "resolved": 5,
+  "expired": 8
+ },
+ "Diamond Bottom": {
+  "win_rate": 0.4167,
+  "expectancy_r": -0.1189,
+  "samples": 4,
+  "resolved": 2,
+  "expired": 2
+ },
+ "Double Bottom": {
+  "win_rate": 0.5714,
+  "expectancy_r": 0.0263,
+  "samples": 18,
+  "resolved": 11,
+  "expired": 7
+ },
+ "Double Top": {
+  "win_rate": 0.4,
+  "expectancy_r": -0.1048,
+  "samples": 38,
+  "resolved": 20,
+  "expired": 18
+ },
+ "Falling Wedge": {
+  "win_rate": 0.5,
+  "expectancy_r": -0.0508,
+  "samples": 13,
+  "resolved": 4,
+  "expired": 9
+ },
+ "Head and Shoulders": {
+  "win_rate": 0.5385,
+  "expectancy_r": -0.0315,
+  "samples": 29,
+  "resolved": 3,
+  "expired": 26
+ },
+ "Inside Bar": {
+  "win_rate": 0.3214,
+  "expectancy_r": -0.1593,
+  "samples": 25,
+  "resolved": 18,
+  "expired": 7
+ },
+ "Inverse Head and Shoulders": {
+  "win_rate": 0.6522,
+  "expectancy_r": 0.1359,
+  "samples": 36,
+  "resolved": 13,
+  "expired": 23
+ },
+ "NR7": {
+  "win_rate": 0.3333,
+  "expectancy_r": -1.0,
+  "samples": 5,
+  "resolved": 5,
+  "expired": 0
+ },
+ "Outside Bar": {
+  "win_rate": 0.4024,
+  "expectancy_r": 0.2969,
+  "samples": 83,
+  "resolved": 72,
+  "expired": 11
+ },
+ "Rising Wedge": {
+  "win_rate": 0.3333,
+  "expectancy_r": -0.6549,
+  "samples": 7,
+  "resolved": 5,
+  "expired": 2
+ },
+ "Rounding Bottom": {
+  "win_rate": 0.56,
+  "expectancy_r": 0.0425,
+  "samples": 116,
+  "resolved": 15,
+  "expired": 101
+ },
+ "Rounding Top": {
+  "win_rate": 0.4667,
+  "expectancy_r": -0.0337,
+  "samples": 82,
+  "resolved": 5,
+  "expired": 77
+ },
+ "Triple Bottom": {
+  "win_rate": 0.6047,
+  "expectancy_r": -0.0411,
+  "samples": 91,
+  "resolved": 33,
+  "expired": 58
+ },
+ "Triple Top": {
+  "win_rate": 0.5532,
+  "expectancy_r": -0.0204,
+  "samples": 102,
+  "resolved": 37,
+  "expired": 65
+ },
+ "Volatility Contraction Pattern": {
+  "win_rate": 0.3684,
+  "expectancy_r": -0.0897,
+  "samples": 16,
+  "resolved": 9,
+  "expired": 7
+ },
+ "Wyckoff Spring": {
+  "win_rate": 0.5185,
+  "expectancy_r": 0.5445,
+  "samples": 18,
+  "resolved": 17,
+  "expired": 1
+ },
+ "Wyckoff Upthrust": {
+  "win_rate": 0.55,
+  "expectancy_r": 0.5264,
+  "samples": 13,
+  "resolved": 10,
+  "expired": 3
+ }
+}

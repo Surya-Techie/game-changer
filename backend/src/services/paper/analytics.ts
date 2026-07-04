@@ -2,10 +2,26 @@
 // the PaperTrade collection. Returns the bundle of series + scalar
 // metrics the analytics page needs.
 
-import { Types } from "mongoose";
 import { PaperTrade } from "../../models/PaperTrade.js";
 import { PaperAccount } from "../../models/PaperAccount.js";
 import { PaperPosition } from "../../models/PaperPosition.js";
+
+// Lean shapes — just the fields the analytics computations read.
+interface TradeRow {
+  netPnl: number;
+  symbol: string;
+  strategyTag?: string;
+  entryTime: Date;
+  exitTime: Date;
+  holdDurationMins: number;
+  exitReason?: string;
+}
+
+interface PositionRow {
+  currentPrice?: number | null;
+  avgEntryPrice: number;
+  qty: number;
+}
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -74,10 +90,10 @@ export async function buildAnalytics(userId: string, accountId: string) {
 }
 
 function computeSummary(
-  trades: any[],
+  trades: TradeRow[],
   startingCapital: number,
   currentCash: number,
-  positions: any[]
+  positions: PositionRow[]
 ) {
   const wins = trades.filter((t) => t.netPnl > 0);
   const losses = trades.filter((t) => t.netPnl < 0);
@@ -110,7 +126,7 @@ function computeSummary(
   };
 }
 
-function computeEquityCurve(trades: any[], starting: number) {
+function computeEquityCurve(trades: TradeRow[], starting: number) {
   let eq = starting;
   const points: { date: string; equity: number; tradePnl: number }[] = [];
   for (const t of trades) {
@@ -120,7 +136,7 @@ function computeEquityCurve(trades: any[], starting: number) {
   return points;
 }
 
-function computeDailyPnl(trades: any[]) {
+function computeDailyPnl(trades: TradeRow[]) {
   const byDay = new Map<string, number>();
   for (const t of trades) {
     const k = istKey(new Date(t.exitTime));
@@ -144,7 +160,7 @@ function computeDrawdown(curve: { equity: number }[]) {
   return { series, maxDrawdownPct: round2(maxDd) };
 }
 
-function computeDistribution(trades: any[]) {
+function computeDistribution(trades: TradeRow[]) {
   if (trades.length === 0) return { bins: [], min: 0, max: 0 };
   const pnls = trades.map((t) => t.netPnl);
   const min = Math.min(...pnls);
@@ -163,7 +179,7 @@ function computeDistribution(trades: any[]) {
   return { bins, min: round2(min), max: round2(max) };
 }
 
-function computeBySymbol(trades: any[]) {
+function computeBySymbol(trades: TradeRow[]) {
   const map = new Map<string, { trades: number; pnl: number; wins: number }>();
   for (const t of trades) {
     const e = map.get(t.symbol) ?? { trades: 0, pnl: 0, wins: 0 };
@@ -182,7 +198,7 @@ function computeBySymbol(trades: any[]) {
     .sort((a, b) => b.pnl - a.pnl);
 }
 
-function computeByHour(trades: any[]) {
+function computeByHour(trades: TradeRow[]) {
   const map = new Map<number, { count: number; pnl: number; wins: number }>();
   for (let h = 9; h <= 15; h++) map.set(h, { count: 0, pnl: 0, wins: 0 });
   for (const t of trades) {
@@ -201,7 +217,7 @@ function computeByHour(trades: any[]) {
   }));
 }
 
-function computeByWeekday(trades: any[]) {
+function computeByWeekday(trades: TradeRow[]) {
   const labels = ["Mon", "Tue", "Wed", "Thu", "Fri"];
   const map = new Map<number, { count: number; pnl: number; wins: number }>();
   for (let i = 1; i <= 5; i++) map.set(i, { count: 0, pnl: 0, wins: 0 });
@@ -221,7 +237,7 @@ function computeByWeekday(trades: any[]) {
   }));
 }
 
-function computeByStrategy(trades: any[]) {
+function computeByStrategy(trades: TradeRow[]) {
   const map = new Map<string, { count: number; pnl: number; wins: number; sumWin: number; sumLoss: number }>();
   for (const t of trades) {
     const tag = (t.strategyTag || "Untagged") as string;
@@ -251,7 +267,7 @@ function computeByStrategy(trades: any[]) {
   });
 }
 
-function computeAdvanced(trades: any[], starting: number) {
+function computeAdvanced(trades: TradeRow[], starting: number) {
   if (trades.length === 0) {
     return { sharpe: 0, sortino: 0, calmar: 0, sqn: 0, kelly: 0, recoveryFactor: 0 };
   }
@@ -306,7 +322,7 @@ function computeAdvanced(trades: any[], starting: number) {
   };
 }
 
-function computeStreaks(trades: any[]) {
+function computeStreaks(trades: TradeRow[]) {
   let curWin = 0;
   let curLoss = 0;
   let maxWin = 0;
@@ -325,7 +341,7 @@ function computeStreaks(trades: any[]) {
   return { maxWinStreak: maxWin, maxLossStreak: maxLoss };
 }
 
-function computeBehavior(trades: any[]) {
+function computeBehavior(trades: TradeRow[]) {
   const wins = trades.filter((t) => t.netPnl > 0);
   const losses = trades.filter((t) => t.netPnl < 0);
   const avgHoldWin = wins.length ? wins.reduce((a, t) => a + t.holdDurationMins, 0) / wins.length : 0;

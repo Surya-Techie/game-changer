@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../store/auth";
 import { Mail, Lock, User, Activity, ArrowRight } from "lucide-react";
+import { apiErrorMessage } from "../lib/errors";
 
 export default function RegisterPage() {
   const [email, setEmail] = useState("");
@@ -21,15 +22,15 @@ export default function RegisterPage() {
       const { data } = await api.post("/api/auth/register", { email, password, name });
       setSession(data.token, data.user);
       nav("/");
-    } catch (err: any) {
-      setError(err?.response?.data?.error ?? "Registration failed");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Registration failed"));
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="relative min-h-screen flex items-center justify-center px-4 bg-app-radial overflow-hidden select-none">
+    <div className="relative min-h-full flex items-center justify-center px-4 bg-app-radial overflow-hidden select-none">
       {/* Dynamic Background Mesh Blobs */}
       <div className="absolute top-1/4 left-1/4 w-[350px] h-[350px] rounded-full bg-accent-info/8 blur-[100px] animate-float-slow pointer-events-none" />
       <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] rounded-full bg-accent-buy/5 blur-[120px] animate-float-slow pointer-events-none [animation-delay:3s]" />

@@ -138,7 +138,6 @@ class OverlayManager {
       this.active.set(def.id, cleanup);
     } catch (err) {
       // Never propagate — we don't want a single bad overlay to crash the dashboard.
-      // eslint-disable-next-line no-console
       console.error(`overlayManager: mount failed for ${def.id}`, err);
     }
   }

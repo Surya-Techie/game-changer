@@ -74,6 +74,30 @@ FEATURE_NAMES = [
 ]
 N_FEATURES = len(FEATURE_NAMES)
 
+# Measured negative results (kept as guardrails for the next person — each
+# was added, OOS-evaluated across 12 NSE large-caps via _eval_models.py,
+# and removed because it did NOT help):
+#   1. Microstructure proxies (close-in-range, inter-bar gap, signed
+#      volume) on 5m/2-bar: direction accuracy 52.9% -> 52.6%, no gain.
+#   2. Cross-sectional / relative-strength vs NIFTY (rel returns, rolling
+#      beta, index return) on 5y daily: 50.4% -> 49.0%, OOS R2 -0.28 ->
+#      -0.44 — actively worse (extra dimensions = noise here).
+# Takeaway: price-DERIVED features (trend, microstructure, cross-sectional)
+# all sit at ~50-53% directional accuracy on liquid NSE large-caps — the
+# efficient-market ceiling. Genuine new edge needs fundamentally different
+# DATA (news/event sentiment, order-book flow, alternative data), not more
+# transformations of OHLCV. Re-measure with _eval_models.py before adding.
+
+
+def _recency_weights(n: int, half_life: float = 250.0) -> np.ndarray:
+    """Exponential-decay sample weights — most recent bar = 1.0, decaying
+    going back with the given half-life (in bars). Keeps the model adapted
+    to the current regime instead of averaging over stale history."""
+    if n <= 0:
+        return np.ones(0, dtype=float)
+    idx = np.arange(n, dtype=float)
+    return 0.5 ** ((n - 1 - idx) / max(1.0, half_life))
+
 
 def _safe_log_div(num: np.ndarray, den: np.ndarray) -> np.ndarray:
     """log(num/den) but tolerant of zeros/negatives — returns 0 for bad rows."""
@@ -251,6 +275,11 @@ class TrainedModel:
     # Median target-scaler from training (used to de-scale predictions
     # back to a nominal % return when the live vol scaler isn't available).
     median_vol_scaler: float = 0.01
+    # Timestamp (ms) of the LAST candle in the training data. Historical
+    # scans must not let the model vote on bars at or before this — those
+    # bars are in the model's own training window (in-sample). 0 = unknown
+    # (legacy pickle) → treat every historical bar as in-sample.
+    train_data_end_t: int = 0
 
     def to_metrics_dict(self) -> dict:
         return {
@@ -291,6 +320,7 @@ def _persist(model: TrainedModel) -> None:
         "scaler": model.scaler,
         "clf_calibrated": model.clf_calibrated,
         "median_vol_scaler": model.median_vol_scaler,
+        "train_data_end_t": model.train_data_end_t,
         "metrics": model.to_metrics_dict(),
     }
     joblib.dump(payload, path)
@@ -337,6 +367,7 @@ def _load(symbol: str) -> Optional[TrainedModel]:
             scaler=payload.get("scaler"),
             clf_calibrated=payload.get("clf_calibrated"),
             median_vol_scaler=payload.get("median_vol_scaler", 0.01),
+            train_data_end_t=int(payload.get("train_data_end_t", 0) or 0),
         )
         _LIVE_MODELS[symbol] = m
         return m
@@ -353,35 +384,54 @@ def train_symbol(symbol: str, candles: List[dict], horizon: int = 5) -> dict:
     # Walk-forward split: 70% train, 15% calibration, 15% holdout (chronological).
     # The middle calibration block is essential — using the same holdout to
     # both fit the probability calibrator and report accuracy would leak.
+    #
+    # PURGE/EMBARGO: each label looks `horizon` bars into the future, so the
+    # last `horizon` training rows share price bars with the first
+    # calibration rows — a subtle look-ahead leak across the boundary. We
+    # drop `horizon` rows after each split so train/cal/test never overlap
+    # in time (López de Prado purging). This makes the holdout numbers
+    # honest, even if it shaves a few samples.
     n = X.shape[0]
+    embargo = max(0, horizon)
     split_train = int(n * 0.70)
     split_cal = int(n * 0.85)
     X_train, y_train = X[:split_train], y[:split_train]
-    X_cal, y_cal = X[split_train:split_cal], y[split_train:split_cal]
-    X_test, y_test = X[split_cal:], y[split_cal:]
-    vol_test = vol_scalers[split_cal:]
+    X_cal, y_cal = X[split_train + embargo:split_cal], y[split_train + embargo:split_cal]
+    X_test, y_test = X[split_cal + embargo:], y[split_cal + embargo:]
+
+    # Recency weighting: recent regime should count more than 5-year-old
+    # bars. Exponential decay with a ~1-year (250-bar) half-life. Tree
+    # models and the GB classifier accept sample_weight; the MLP does not,
+    # so it trains unweighted (it already has early-stopping regularisation).
+    w_train = _recency_weights(X_train.shape[0])
 
     scaler = StandardScaler().fit(X_train)
     X_train_s = scaler.transform(X_train)
     X_test_s = scaler.transform(X_test)
 
-    # Three models.
+    # Three models. Hyper-parameters are deliberately MORE regularised than
+    # a naive fit: shallower trees, larger leaves, decorrelated RF splits
+    # (max_features="sqrt"), stochastic gradient boosting (subsample<1) and
+    # an L2-penalised MLP. The baseline pipeline overfit hard on some
+    # symbols (OOS R² as low as −4); regularisation pulls those back toward
+    # the honest coin-flip baseline instead of confidently-wrong.
     rf = RandomForestRegressor(
-        n_estimators=200, max_depth=8, min_samples_leaf=4,
+        n_estimators=300, max_depth=5, min_samples_leaf=10,
+        max_features="sqrt",
         n_jobs=int(os.getenv("ML_THREADS", "1")), random_state=42,
     )
     gbm = GradientBoostingRegressor(
-        n_estimators=200, max_depth=4, learning_rate=0.04,
-        min_samples_leaf=4, random_state=42,
+        n_estimators=150, max_depth=3, learning_rate=0.03,
+        min_samples_leaf=20, subsample=0.7, random_state=42,
     )
     mlp = MLPRegressor(
-        hidden_layer_sizes=(48, 24), max_iter=300, early_stopping=True,
-        learning_rate_init=0.005, random_state=42,
+        hidden_layer_sizes=(32, 16), alpha=1e-3, max_iter=400,
+        early_stopping=True, learning_rate_init=0.003, random_state=42,
     )
 
-    rf.fit(X_train, y_train)        # tree models don't need scaling
-    gbm.fit(X_train, y_train)
-    mlp.fit(X_train_s, y_train)
+    rf.fit(X_train, y_train, sample_weight=w_train)   # trees don't need scaling
+    gbm.fit(X_train, y_train, sample_weight=w_train)
+    mlp.fit(X_train_s, y_train)                        # MLP: no sample_weight API
 
     def ensemble_predict(Xa: np.ndarray, Xs: np.ndarray) -> np.ndarray:
         return (rf.predict(Xa) + gbm.predict(Xa) + mlp.predict(Xs)) / 3.0
@@ -419,9 +469,14 @@ def train_symbol(symbol: str, candles: List[dict], horizon: int = 5) -> dict:
     brier_score = 0.25
     log_loss_holdout = 0.693
     if can_calibrate:
+        # The classifier feeds the UI confidence and the composer's ML vote,
+        # so its probability CALIBRATION matters as much as its direction
+        # call. Recency-weighting the base estimator while calibrating on an
+        # unweighted block hurts calibration, so the classifier trains
+        # unweighted; we only add mild stochastic-boosting variance control.
         gb_clf = GradientBoostingClassifier(
             n_estimators=200, max_depth=3, learning_rate=0.05,
-            min_samples_leaf=8, random_state=42,
+            min_samples_leaf=12, subsample=0.8, random_state=42,
         )
         gb_clf.fit(X_train, y_train_cls)
         # Isotonic calibration is non-parametric and overfits when the
@@ -429,7 +484,9 @@ def train_symbol(symbol: str, candles: List[dict], horizon: int = 5) -> dict:
         # probabilities to near-0/near-1 which then blow up LogLoss on a
         # single misclassification. Sigmoid (Platt) is a parametric
         # 2-parameter fit, far more stable when calibration data is scarce.
-        calibration_method = "isotonic" if X_cal.shape[0] >= 150 else "sigmoid"
+        # Isotonic needs a lot of calibration data to not overfit; with the
+        # purged ~15% block (often <300 rows) sigmoid is the stabler choice.
+        calibration_method = "isotonic" if X_cal.shape[0] >= 300 else "sigmoid"
         # Pre-fit the base classifier on train, then calibrate on the held-out
         # block. sklearn ≥ 1.6 requires the `FrozenEstimator` wrapper; older
         # versions accept cv="prefit".
@@ -481,7 +538,10 @@ def train_symbol(symbol: str, candles: List[dict], horizon: int = 5) -> dict:
     if X_train.shape[0] >= 60:
         tss = TimeSeriesSplit(n_splits=5)
         for fold_train, fold_test in tss.split(X_train):
-            rf_cv = RandomForestRegressor(n_estimators=100, max_depth=6, n_jobs=1, random_state=42)
+            rf_cv = RandomForestRegressor(
+                n_estimators=150, max_depth=5, min_samples_leaf=10,
+                max_features="sqrt", n_jobs=1, random_state=42,
+            )
             rf_cv.fit(X_train[fold_train], y_train[fold_train])
             pred = rf_cv.predict(X_train[fold_test])
             cv_scores.append(r2(y_train[fold_test], pred))
@@ -513,6 +573,7 @@ def train_symbol(symbol: str, candles: List[dict], horizon: int = 5) -> dict:
         rf=rf, gbm=gbm, mlp=mlp, scaler=scaler,
         clf_calibrated=clf_calibrated,
         median_vol_scaler=max(median_vs, 1e-6),
+        train_data_end_t=int(candles[-1]["t"]) if candles else 0,
     )
     _LIVE_MODELS[symbol] = model
     _persist(model)
@@ -526,6 +587,11 @@ def predict_with_trained(symbol: str, candles: List[dict]) -> dict:
     X, _y, _t, vol_scalers = build_features(candles)
     if X.shape[0] == 0:
         return {"ready": False, "reason": "not enough history to predict"}
+    # Guard against a stale model trained with a different feature set
+    # (e.g. before microstructure features were added). Report it cleanly
+    # so the caller retrains, rather than crashing on a shape mismatch.
+    if X.shape[1] != model.n_features:
+        return {"ready": False, "reason": "feature set changed — retrain via /ml/train"}
     x_last = X[-1:].copy()
     x_last_s = model.scaler.transform(x_last)
     # Each model returns a VOL-SCALED log-return (target was log_ret/vol_20
@@ -635,6 +701,89 @@ def predict_with_trained(symbol: str, candles: List[dict]) -> dict:
             "featureImportance": {k: round(v, 4) for k, v in sorted(model.feature_importance.items(), key=lambda x: -x[1])[:8]},
         },
     }
+
+
+def predict_series_with_trained(symbol: str, candles: List[dict]) -> Dict[int, dict]:
+    """Per-bar predictions for a historical scan, computed in one pass.
+
+    Returns {bar_index: prediction} where each prediction carries the
+    fields the power-analysis voter reads (ready / direction / confidence
+    / model.brierScore / model.directionAccuracyPct).
+
+    Matches predict_with_trained(symbol, candles[:i+1]) for every i: the
+    prefix's last feature row is the one built at candle i - horizon
+    (build_features drops the final `horizon` bars because targets need
+    future data), and every feature only looks backward — so row values
+    are identical whether built on the prefix or the full series. The
+    difference is cost: one build_features + batched model calls instead
+    of one full rebuild per bar (O(n) vs O(n²)).
+    """
+    model = _load(symbol)
+    if model is None:
+        return {}
+    X, _y, _t, vol_scalers = build_features(candles)
+    if X.shape[0] == 0 or X.shape[1] != model.n_features:
+        return {}
+    horizon = 5  # build_features' fixed target horizon
+    try:
+        x_scaled = model.scaler.transform(X)
+        rf_raw = np.clip(model.rf.predict(X), -5.0, 5.0)
+        gbm_raw = np.clip(model.gbm.predict(X), -5.0, 5.0)
+        mlp_raw = np.clip(model.mlp.predict(x_scaled), -5.0, 5.0)
+    except Exception:
+        return {}
+    proba_all: Optional[np.ndarray] = None
+    if model.clf_calibrated is not None:
+        try:
+            proba_all = np.clip(model.clf_calibrated.predict_proba(X)[:, 1], 0.02, 0.98)
+        except Exception:
+            proba_all = None
+
+    # Model-level skill terms are constant across bars (same formula as
+    # predict_with_trained's honest-confidence path).
+    edge_score = max(0.0, min(1.0, (0.25 - model.brier_score) / 0.05))
+    dir_score = max(0.0, min(1.0, (model.direction_accuracy_pct / 100.0 - 0.5) * 5.0))
+    skill = (edge_score + dir_score) / 2.0
+    model_block = {
+        "directionAccuracyPct": round(model.direction_accuracy_pct, 2),
+        "brierScore": round(model.brier_score, 4),
+    }
+
+    # In-sample gate: the model must not vote on bars that were part of its
+    # own training data — an auto-trained model "predicting" its training
+    # window would inflate the measured accuracy with look-ahead. Only bars
+    # AFTER the training data's last candle get a vote. Legacy pickles
+    # without the field (train_data_end_t=0 means unknown) are treated as
+    # trained-on-everything: no historical votes, live-forward only.
+    cutoff_t = model.train_data_end_t
+    if cutoff_t <= 0:
+        return {}
+
+    out: Dict[int, dict] = {}
+    for j in range(X.shape[0]):
+        bar_index = j + 50 + horizon   # scan bar whose prefix ends at row j
+        if bar_index >= len(candles) or int(candles[bar_index]["t"]) <= cutoff_t:
+            continue
+        vol = float(vol_scalers[j]) if j < vol_scalers.size and vol_scalers[j] > 0 else model.median_vol_scaler
+        ensemble = float(np.median([rf_raw[j] * vol, gbm_raw[j] * vol, mlp_raw[j] * vol]))
+        ensemble = max(-0.05, min(0.05, ensemble))
+        proba_up: Optional[float] = float(proba_all[j]) if proba_all is not None else None
+        if proba_up is not None:
+            direction = "UP" if proba_up >= 0.55 else "DOWN" if proba_up <= 0.45 else "FLAT"
+            confidence = round(min(0.95, abs(proba_up - 0.5) * 2.0 * skill), 3)
+        else:
+            exp_pct = (np.exp(ensemble) - 1.0) * 100
+            direction = "UP" if ensemble > 5e-4 else "DOWN" if ensemble < -5e-4 else "FLAT"
+            base_conf = max(0.0, min(0.4, abs(exp_pct) / 1.0))
+            confidence = round(min(0.6, base_conf + max(0.0, model.oos_r2) * 0.4), 3)
+        out[bar_index] = {
+            "ready": True,
+            "direction": direction,
+            "confidence": confidence,
+            "probUp": round(proba_up, 4) if proba_up is not None else None,
+            "model": model_block,
+        }
+    return out
 
 
 def registry() -> dict:

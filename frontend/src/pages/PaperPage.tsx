@@ -189,7 +189,7 @@ export default function PaperPage() {
   const todayTrades = trades.filter((t) => isSameIstDay(new Date(t.exitTime), new Date()));
 
   return (
-    <div className="min-h-screen flex flex-col bg-app-radial text-slate-200">
+    <div className="min-h-full flex flex-col bg-app-radial text-slate-200">
       <PaperBanner />
       <Topbar symbol={symbol} wsStatus="open" />
       <div className="flex-1 flex">

@@ -38,6 +38,11 @@ const signalSchema = new Schema(
     },
     outcomePrice: { type: Number },
     outcomeAt: { type: Date },
+    // Provenance of the prices that produced this signal. "live" = real NSE
+    // ticks were flowing at signal time; "synthetic" = dev random-walk feed.
+    // Old documents (before this field) have no value and are treated as
+    // synthetic by live-only accuracy queries.
+    dataSource: { type: String, enum: ["live", "synthetic"], index: true },
     createdAt: { type: Date, default: () => new Date(), index: true },
   },
   { versionKey: false }

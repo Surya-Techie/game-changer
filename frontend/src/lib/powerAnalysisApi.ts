@@ -10,7 +10,8 @@ import { api } from "./api";
  */
 
 export type PowerAction = "BUY" | "SELL" | "HOLD";
-export type PowerMode = "strict" | "loose";
+/** Single POWER rule; "strict"/"loose" remain only as legacy aliases. */
+export type PowerMode = "power" | "strict" | "loose";
 
 export interface PowerVote {
   strategy: string;
@@ -69,6 +70,8 @@ export interface PowerAccuracy {
   avg_per_trade_pct: number;
   total_return_pct: number;
   unresolved_signals: number;
+  /** Round-trip cost (%) already deducted from every per-trade return. */
+  round_trip_cost_pct?: number;
   honest_note?: string;
   note?: string;
 }
@@ -97,6 +100,11 @@ export interface CandleForPower {
   v: number;
 }
 
+// In-flight de-dupe: identical concurrent calls (double-mounted panels,
+// a live rerun racing a slow response) share one request instead of
+// stampeding the ai-service, whose scans are CPU-bound.
+const _inflight = new Map<string, Promise<PowerAnalysisResponse | null>>();
+
 /**
  * Call POST /api/power-analysis. Returns null on transport failure so the
  * UI can render an "AI service unavailable" state cleanly.
@@ -114,19 +122,35 @@ export async function fetchPowerAnalysis(opts: {
    *  overrides the R-multiple target. */
   targetPct?: number;
 }): Promise<PowerAnalysisResponse | null> {
-  try {
-    const body: Record<string, unknown> = {
-      symbol: opts.symbol.toUpperCase(),
-      candles: opts.candles,
-      mode: opts.mode ?? "strict",
-      useMl: opts.useMl ?? false,
-      targetR: opts.targetR ?? 2,
-    };
-    if (opts.stopPct != null && opts.stopPct > 0) body.stopPct = opts.stopPct;
-    if (opts.targetPct != null && opts.targetPct > 0) body.targetPct = opts.targetPct;
-    const { data } = await api.post<PowerAnalysisResponse>("/api/power-analysis", body);
-    return data ?? null;
-  } catch {
-    return null;
-  }
+  const body: Record<string, unknown> = {
+    symbol: opts.symbol.toUpperCase(),
+    candles: opts.candles,
+    mode: opts.mode ?? "power",
+    useMl: opts.useMl ?? false,
+    targetR: opts.targetR ?? 2,
+  };
+  if (opts.stopPct != null && opts.stopPct > 0) body.stopPct = opts.stopPct;
+  if (opts.targetPct != null && opts.targetPct > 0) body.targetPct = opts.targetPct;
+
+  const tail = opts.candles[opts.candles.length - 1];
+  const key = [
+    body.symbol, body.mode, body.useMl, body.targetR,
+    body.stopPct ?? "", body.targetPct ?? "",
+    opts.candles.length, tail?.t ?? 0, tail?.c ?? 0,
+  ].join("|");
+  const existing = _inflight.get(key);
+  if (existing) return existing;
+
+  const p = (async () => {
+    try {
+      const { data } = await api.post<PowerAnalysisResponse>("/api/power-analysis", body);
+      return data ?? null;
+    } catch {
+      return null;
+    } finally {
+      _inflight.delete(key);
+    }
+  })();
+  _inflight.set(key, p);
+  return p;
 }

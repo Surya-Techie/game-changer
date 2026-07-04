@@ -1,7 +1,13 @@
 import { User } from "../models/User.js";
 import { AccountState } from "../models/AccountState.js";
 import { Position } from "../models/Position.js";
+import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
+
+// Capital assumed for the default dev user when auth is disabled and no
+// real User document exists. Keeps the auto-trade / risk path working in
+// dev without seeding a user. Production (auth on) still requires a User.
+const DEV_DEFAULT_CAPITAL = 100_000;
 
 export interface RiskDecision {
   allowed: boolean;
@@ -41,8 +47,8 @@ export async function evaluateNewPosition(args: {
   if (state.autoTradeMode === "OFF") return { allowed: false, reason: "Auto-trade OFF" };
 
   const user = await User.findById(args.userId);
-  if (!user) return { allowed: false, reason: "User not found" };
-  const capital = user.capital ?? 100_000;
+  if (!user && !env.authDisabled) return { allowed: false, reason: "User not found" };
+  const capital = user?.capital ?? DEV_DEFAULT_CAPITAL;
 
   // Daily loss limit.
   const dailyLossCap = (capital * state.maxDailyLossPct) / 100;

@@ -30,6 +30,12 @@ export const env = {
   redisUrl: required("REDIS_URL", "redis://localhost:6379"),
   jwtSecret: requiredInProd("JWT_SECRET", DEV_JWT_FALLBACK),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? "7d",
+
+  // Auth bypass for local/dev when the login UI is disabled. When true,
+  // requireAuth admits requests without a token by attaching a default
+  // dev user. Defaults ON outside production and OFF in production so a
+  // real deployment never silently drops authentication.
+  authDisabled: (process.env.AUTH_DISABLED ?? (IS_PROD ? "false" : "true")) === "true",
   aiServiceUrl: process.env.AI_SERVICE_URL ?? "http://localhost:8000",
   signalIntervalMs: Number(process.env.SIGNAL_INTERVAL_MS ?? 15000),
   mockFeedEnabled: (process.env.MOCK_FEED_ENABLED ?? "true") === "true",

@@ -67,6 +67,7 @@ def mtf_summary(candles_1m: List[dict]) -> dict:
         "1m": candles_1m,
         "5m": resample(candles_1m, 5),
         "15m": resample(candles_1m, 15),
+        "30m": resample(candles_1m, 30),
         "1h": resample(candles_1m, 60),
         "1D": resample(candles_1m, 60 * 24),
     }

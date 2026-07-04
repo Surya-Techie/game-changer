@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { motion } from "framer-motion";
@@ -24,11 +24,27 @@ interface RowData {
   volumeRatio?: number | null;
 }
 
+/** Full live quote from /api/market/quotes (NSE via the AI service). */
+interface Quote {
+  symbol: string;
+  ltp: number;
+  open: number;
+  high: number;
+  low: number;
+  prev_close: number;
+  change: number;
+  pct_change: number;
+  ts: number;
+  source: string;
+}
+
 export default function WatchlistPage() {
   const nav = useNavigate();
   const [lists, setLists] = useState<Watchlist[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [rows, setRows] = useState<Record<string, RowData>>({});
+  const [quotes, setQuotes] = useState<Record<string, Quote>>({});
+  const [quotesAt, setQuotesAt] = useState<number | null>(null);
   const [universe, setUniverse] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
   const [addSymbol, setAddSymbol] = useState("");
@@ -57,6 +73,7 @@ export default function WatchlistPage() {
       .then((data) => setAllStocks(data))
       .catch((err) => console.error("Error loading stocks database:", err))
       .finally(() => setLoadingStocks(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, []);
 
   async function loadLists() {
@@ -79,7 +96,7 @@ export default function WatchlistPage() {
       for (const sym of active.symbols) {
         const { data } = await api.get(`/api/market/candles/${sym}?limit=60`);
         const candles = data.candles ?? [];
-        const closes = candles.map((c: any) => c.c);
+        const closes = candles.map((c: { c: number }) => c.c);
         const first = closes[0];
         const last = closes[closes.length - 1];
         base[sym] = {
@@ -92,6 +109,7 @@ export default function WatchlistPage() {
       if (!aborted) setRows(base);
     })();
     return () => { aborted = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
   }, [activeId, active?.symbols.join("|")]);
 
   async function runScan() {
@@ -199,8 +217,45 @@ export default function WatchlistPage() {
 
   const totalPages = Math.ceil(filteredStocks.length / ITEMS_PER_PAGE);
 
+  // Live quotes: poll the batch endpoint for whatever is on screen —
+  // the active watchlist, or the visible page of the all-stocks browser
+  // (50 rows, exactly the endpoint's batch cap). Server caches for 3 s,
+  // so many tabs still mean one upstream fetch. The all-stocks tab polls
+  // slower (10 s) because a 50-symbol cold batch is a heavier upstream hit.
+  const quoteSymbolsKey = activeId === "ALL"
+    ? paginatedStocks.map((s) => s.symbol).join(",")
+    : (active?.symbols ?? []).join(",");
+  useEffect(() => {
+    if (!quoteSymbolsKey) {
+      setQuotes({});
+      setQuotesAt(null);
+      return;
+    }
+    let stop = false;
+    const load = async () => {
+      try {
+        const { data } = await api.get("/api/market/quotes", {
+          params: { symbols: quoteSymbolsKey },
+        });
+        if (!stop) {
+          setQuotes((prev) => ({ ...prev, ...(data.quotes ?? {}) }));
+          setQuotesAt(Date.now());
+        }
+      } catch {
+        /* transient — keep the last quotes */
+      }
+    };
+    void load();
+    const t = setInterval(load, activeId === "ALL" ? 10_000 : 5_000);
+    return () => {
+      stop = true;
+      clearInterval(t);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
+  }, [quoteSymbolsKey]);
+
   return (
-    <div className="min-h-screen bg-app-radial text-slate-200">
+    <div className="min-h-full bg-app-radial text-slate-200">
       <header className="border-b border-bg-border bg-bg-panel-solid/60 backdrop-blur-glass px-6 py-4 flex justify-between items-center">
         <div>
           <Link to="/" className="text-xs text-slate-500 hover:text-white transition-colors">← Dashboard</Link>
@@ -404,27 +459,64 @@ export default function WatchlistPage() {
                 <div className="px-6 py-12 text-sm text-slate-400 text-center font-mono animate-pulse">Loading stock database...</div>
               ) : (
                 <>
+                  <div className="px-4 py-2 border-b border-bg-border flex items-center justify-between bg-black/10">
+                    <span className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">Live quotes for this page</span>
+                    <span className="flex items-center gap-1.5 text-[10px] font-mono text-slate-500">
+                      {quotesAt ? (
+                        <>
+                          <span className="h-1.5 w-1.5 rounded-full bg-accent-buy animate-pulse" />
+                          live · refreshes every 10s
+                        </>
+                      ) : (
+                        "loading quotes…"
+                      )}
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead className="text-[10px] uppercase tracking-wider text-slate-500 border-b border-bg-border bg-black/10">
                       <tr>
                         <th className="text-left px-4 py-3 font-mono">Symbol</th>
                         <th className="text-left px-3 py-3">Company Name</th>
-                        <th className="text-center px-3 py-3 font-mono">Exchange</th>
+                        <th className="text-right px-3 py-3 font-mono">LTP</th>
+                        <th className="text-right px-3 py-3 font-mono">Chg ₹</th>
+                        <th className="text-right px-3 py-3 font-mono">Chg %</th>
+                        <th className="text-right px-3 py-3 font-mono">Open</th>
+                        <th className="text-right px-3 py-3 font-mono">High</th>
+                        <th className="text-right px-3 py-3 font-mono">Low</th>
+                        <th className="text-right px-3 py-3 font-mono">Prev Close</th>
+                        <th className="text-center px-3 py-3 font-mono">Exch</th>
                         <th className="text-center px-3 py-3">Sector</th>
                         <th className="text-right px-4 py-3">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-bg-border">
-                      {paginatedStocks.map((s) => (
+                      {paginatedStocks.map((s) => {
+                        const q = quotes[s.symbol];
+                        const qUp = (q?.pct_change ?? 0) >= 0;
+                        return (
                         <tr key={s.symbol} className="hover:bg-white/[0.01] transition-colors">
                           <td className="px-4 py-3 font-mono font-medium">
-                            <button onClick={() => nav(`/?symbol=${s.symbol}`)} className="text-indigo-400 hover:text-indigo-300 font-semibold transition-colors">{s.symbol}</button>
+                            <button onClick={() => nav(`/?symbol=${s.symbol}`)} className="text-indigo-400 hover:text-indigo-300 font-semibold transition-colors">{s.base}</button>
                           </td>
-                          <td className="px-3 py-3 text-slate-200 font-sans">{s.name}</td>
+                          <td className="px-3 py-3 text-slate-200 font-sans max-w-[200px] truncate">{s.name}</td>
+                          <td className={clsx("px-3 py-3 text-right font-mono font-semibold", q ? (qUp ? "text-accent-buy" : "text-accent-sell") : "text-slate-500")}>
+                            {q?.ltp != null ? q.ltp.toFixed(2) : "—"}
+                          </td>
+                          <td className={clsx("px-3 py-3 text-right font-mono", q ? (qUp ? "text-accent-buy" : "text-accent-sell") : "text-slate-500")}>
+                            {q?.change != null ? `${q.change >= 0 ? "+" : ""}${q.change.toFixed(2)}` : "—"}
+                          </td>
+                          <td className={clsx("px-3 py-3 text-right font-mono", q ? (qUp ? "text-accent-buy" : "text-accent-sell") : "text-slate-500")}>
+                            {q?.pct_change != null ? `${qUp ? "+" : ""}${q.pct_change.toFixed(2)}%` : "—"}
+                          </td>
+                          <td className="px-3 py-3 text-right font-mono text-slate-300">{q?.open ? q.open.toFixed(2) : "—"}</td>
+                          <td className="px-3 py-3 text-right font-mono text-slate-300">{q?.high ? q.high.toFixed(2) : "—"}</td>
+                          <td className="px-3 py-3 text-right font-mono text-slate-300">{q?.low ? q.low.toFixed(2) : "—"}</td>
+                          <td className="px-3 py-3 text-right font-mono text-slate-400">{q?.prev_close ? q.prev_close.toFixed(2) : "—"}</td>
                           <td className="px-3 py-3 text-center">
                             <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded font-mono border ${
-                              s.exchange === "NSE" 
-                                ? "bg-indigo-950/40 text-indigo-400 border-indigo-500/20" 
+                              s.exchange === "NSE"
+                                ? "bg-indigo-950/40 text-indigo-400 border-indigo-500/20"
                                 : "bg-amber-950/40 text-amber-400 border-amber-500/20"
                             }`}>{s.exchange}</span>
                           </td>
@@ -472,9 +564,11 @@ export default function WatchlistPage() {
                             </div>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
+                  </div>
 
                   {totalPages > 1 && (
                     <div className="border-t border-bg-border px-4 py-3 flex items-center justify-between text-xs text-slate-400 font-mono bg-black/10">
@@ -544,22 +638,43 @@ export default function WatchlistPage() {
               </section>
 
               <section className="bg-bg-panel-solid/70 border border-bg-border rounded-xl overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-bg-border flex items-center justify-between bg-black/10">
+                  <span className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">Live quote board</span>
+                  <span className="flex items-center gap-1.5 text-[10px] font-mono text-slate-500">
+                    {quotesAt ? (
+                      <>
+                        <span className="h-1.5 w-1.5 rounded-full bg-accent-buy animate-pulse" />
+                        live · refreshes every 5s
+                      </>
+                    ) : (
+                      "loading quotes…"
+                    )}
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="text-[10px] uppercase tracking-wider text-slate-500 bg-black/10">
                     <tr>
                       <th className="text-left px-4 py-3 font-mono">Symbol</th>
                       <th className="text-right px-3 py-3 font-mono">LTP</th>
+                      <th className="text-right px-3 py-3 font-mono">Chg ₹</th>
                       <th className="text-right px-3 py-3 font-mono">Chg %</th>
+                      <th className="text-right px-3 py-3 font-mono">Open</th>
+                      <th className="text-right px-3 py-3 font-mono">High</th>
+                      <th className="text-right px-3 py-3 font-mono">Low</th>
+                      <th className="text-right px-3 py-3 font-mono">Prev Close</th>
                       <th className="px-3 py-3">Sparkline</th>
                       <th className="text-center px-3 py-3 font-mono">Signal</th>
-                      <th className="text-center px-3 py-3 font-mono">Composite</th>
-                      <th className="text-right px-3 py-3 font-mono">Vol×</th>
                       <th className="text-right px-4 py-3">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-bg-border">
                     {sortedRows.map((r, i) => {
-                      const up = (r.changePct ?? 0) >= 0;
+                      const q = quotes[r.symbol];
+                      const ltp = q?.ltp ?? r.price;
+                      const chg = q?.change;
+                      const chgPct = q?.pct_change ?? r.changePct;
+                      const up = (chgPct ?? 0) >= 0;
                       const tone = r.recommendation?.includes("BUY") ? "border-l-accent-buy/50 bg-accent-buy/5" : r.recommendation?.includes("SELL") ? "border-l-accent-sell/50 bg-accent-sell/5" : "border-l-transparent";
                       return (
                         <motion.tr
@@ -571,10 +686,19 @@ export default function WatchlistPage() {
                           <td className="px-4 py-2">
                             <button onClick={() => nav(`/?symbol=${r.symbol}`)} className="text-white font-semibold hover:text-indigo-300 transition-colors">{r.symbol}</button>
                           </td>
-                          <td className="px-3 py-2 text-right font-mono">{r.price?.toFixed(2) ?? "—"}</td>
-                          <td className={clsx("px-3 py-2 text-right font-mono", up ? "text-accent-buy" : "text-accent-sell")}>
-                            {r.changePct != null ? `${up ? "+" : ""}${r.changePct.toFixed(2)}%` : "—"}
+                          <td className={clsx("px-3 py-2 text-right font-mono font-semibold", up ? "text-accent-buy" : "text-accent-sell")}>
+                            {ltp != null ? ltp.toFixed(2) : "—"}
                           </td>
+                          <td className={clsx("px-3 py-2 text-right font-mono", up ? "text-accent-buy" : "text-accent-sell")}>
+                            {chg != null ? `${chg >= 0 ? "+" : ""}${chg.toFixed(2)}` : "—"}
+                          </td>
+                          <td className={clsx("px-3 py-2 text-right font-mono", up ? "text-accent-buy" : "text-accent-sell")}>
+                            {chgPct != null ? `${up ? "+" : ""}${chgPct.toFixed(2)}%` : "—"}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-300">{q?.open ? q.open.toFixed(2) : "—"}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-300">{q?.high ? q.high.toFixed(2) : "—"}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-300">{q?.low ? q.low.toFixed(2) : "—"}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-400">{q?.prev_close ? q.prev_close.toFixed(2) : "—"}</td>
                           <td className="px-3 py-2"><Sparkline points={r.sparkline ?? []} /></td>
                           <td className="px-3 py-2 text-center">
                             {r.signal ? (
@@ -584,19 +708,7 @@ export default function WatchlistPage() {
                               </span>
                             ) : "—"}
                           </td>
-                          <td className="px-3 py-2 text-center font-mono">
-                            {r.compositeScore != null ? (
-                              <span className={clsx(
-                                r.compositeScore >= 65 ? "text-accent-buy" : r.compositeScore <= 35 ? "text-accent-sell" : "text-slate-300"
-                              )}>
-                                {r.compositeScore.toFixed(0)}
-                              </span>
-                            ) : <span className="text-slate-500">—</span>}
-                          </td>
-                          <td className="px-3 py-2 text-right font-mono text-slate-300">
-                            {r.volumeRatio ? r.volumeRatio.toFixed(2) + "×" : "—"}
-                          </td>
-                          <td className="px-4 py-2 text-right text-[11px]">
+                          <td className="px-4 py-2 text-right text-[11px] whitespace-nowrap">
                             <button onClick={() => reorder(r.symbol, -1)} disabled={i === 0} className="text-slate-500 hover:text-white px-1 disabled:opacity-30 transition-colors font-mono">↑</button>
                             <button onClick={() => reorder(r.symbol, 1)} disabled={i === sortedRows.length - 1} className="text-slate-500 hover:text-white px-1 disabled:opacity-30 transition-colors font-mono">↓</button>
                             <button onClick={() => removeSym(r.symbol)} className="text-slate-500 hover:text-accent-sell px-2 transition-colors">×</button>
@@ -606,6 +718,7 @@ export default function WatchlistPage() {
                     })}
                   </tbody>
                 </table>
+                </div>
                 {sortedRows.length === 0 && (
                   <div className="px-6 py-8 text-sm text-slate-400 text-center font-mono">List is empty — add symbols above.</div>
                 )}

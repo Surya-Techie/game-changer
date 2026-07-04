@@ -3,7 +3,7 @@ import { z } from "zod";
 import axios from "axios";
 import { env } from "../config/env.js";
 import { requireAuth } from "../middleware/auth.js";
-import { getCandles } from "../services/candleAggregator.js";
+import { getCandlesSmart } from "../services/candleAggregator.js";
 import { runBacktest } from "../services/aiClient.js";
 import { PATTERN_TIMEFRAMES } from "../models/Pattern.js";
 import { logger } from "../utils/logger.js";
@@ -41,7 +41,7 @@ router.post("/", async (req, res, next) => {
     const body = bodySchema.parse(req.body);
     const symbol = body.symbol.toUpperCase();
     const limit = body.bars ?? 500;
-    const candles = getCandles(symbol, limit);
+    const candles = await getCandlesSmart(symbol, limit);
     if (candles.length < (body.warmup ?? 60) + 20) {
       return res.status(400).json({ error: "Not enough candles to backtest", have: candles.length });
     }

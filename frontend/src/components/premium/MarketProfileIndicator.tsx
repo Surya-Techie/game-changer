@@ -3,6 +3,7 @@ import { api } from "../../lib/api";
 import { overlayManager } from "../../lib/overlayManager";
 import { usePremium } from "../../store/premium";
 import PremiumIndicatorCard from "../PremiumIndicatorCard";
+import { apiErrorMessage } from "../../lib/errors";
 
 interface ProfileResponse {
   symbol: string;
@@ -45,8 +46,8 @@ export default function MarketProfileIndicator({ symbol }: { symbol: string }) {
       setData(data as ProfileResponse);
       setUpdated(Date.now());
       setLoadState("profile", "ready");
-    } catch (err: any) {
-      const msg = err?.response?.data?.error ?? err.message ?? "Failed";
+    } catch (err) {
+      const msg = apiErrorMessage(err, "Failed");
       setError(msg);
       setLoadState("profile", "error", msg);
     }

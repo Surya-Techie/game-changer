@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import TopStockCard, { type TopStockRow } from "../components/TopStockCard";
+import { apiErrorMessage } from "../lib/errors";
 
 type SortKey = "composite" | "change" | "ml" | "ai";
 type FilterKey = "all" | "buy" | "sell" | "neutral";
@@ -22,8 +23,8 @@ export default function TopStocksPage() {
       const { data } = await api.get(`/api/top-stocks${force ? "?force=true" : ""}`);
       setRows(data.rows ?? []);
       setTs(data.ts ?? Date.now());
-    } catch (err: any) {
-      setError(err?.response?.data?.error ?? err.message ?? "Failed");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Failed"));
     } finally {
       setLoading(false);
     }
@@ -60,7 +61,7 @@ export default function TopStocksPage() {
   };
 
   return (
-    <div className="min-h-screen bg-app-radial text-slate-200">
+    <div className="min-h-full bg-app-radial text-slate-200">
       <header className="border-b border-bg-border bg-bg-panel-solid/60 backdrop-blur-glass px-6 py-4 flex flex-wrap items-center gap-4">
         <div>
           <Link to="/" className="text-xs text-slate-500 hover:text-white">← Dashboard</Link>

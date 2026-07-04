@@ -38,14 +38,17 @@ export interface ChanRecommendation {
 export async function fetchChanRecommendation(
   symbol: string,
   lookbackDays = 252,
-): Promise<ChanRecommendation | null> {
+): Promise<ChanRecommendation | { error: "no_data" | "unavailable" }> {
   try {
     const { data } = await api.post<ChanRecommendation>(
       `/api/chan-advisor/recommend/${encodeURIComponent(symbol.toUpperCase())}`,
       { lookback_days: lookbackDays },
     );
     return data;
-  } catch {
-    return null;
+  } catch (err) {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    // 404 = the symbol has no usable Yahoo history (delisted / renamed /
+    // partial ticker) — a data condition, not a service failure.
+    return { error: status === 404 ? "no_data" : "unavailable" };
   }
 }
