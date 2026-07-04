@@ -66,11 +66,6 @@ const TF_POLL_MS: Record<PatternChartTimeframe, number> = {
   Y1:  300_000,
 };
 
-const SYMBOL_UNIVERSE = [
-  "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK",
-  "SBIN", "AXISBANK", "ITC", "LT", "BHARTIARTL",
-];
-
 interface ActiveOverlay {
   key: string;
   payload: WsPatternPayload;
@@ -80,7 +75,7 @@ interface ActiveOverlay {
 
 interface Props {
   symbol: string;
-  onSymbolChange: (s: string) => void;
+  onSymbolChange?: (s: string) => void;
 }
 
 function dirColor(direction: WsPatternPayload["direction"]): string {
@@ -122,7 +117,7 @@ function toPayload(symbol: string, tf: string, p: PatternDoc): WsPatternPayload 
   };
 }
 
-export default function PatternLiveChart({ symbol, onSymbolChange }: Props) {
+export default function PatternLiveChart({ symbol }: Props) {
   const token = useAuth((s) => s.token);
   const [timeframe, setTimeframe] = useState<PatternChartTimeframe>("D1");
   const [candles, setCandles] = useState<Array<{ t: number; o: number; h: number; l: number; c: number }>>([]);
@@ -310,13 +305,24 @@ export default function PatternLiveChart({ symbol, onSymbolChange }: Props) {
           },
         });
       } catch { /* */ }
-      const seriesData: CandlestickData[] = rows.map((c) => ({
-        time: Math.floor(c.t / 1000) as UTCTimestamp,
-        open: c.o,
-        high: c.h,
-        low: c.l,
-        close: c.c,
-      }));
+      // Sanitize: drop rows with null/NaN OHLC (yfinance emits them for
+      // illiquid sessions) and dedupe/sort by time — lightweight-charts
+      // hard-asserts on either problem and takes the page down.
+      const byTime = new Map<number, (typeof rows)[number]>();
+      for (const c of rows) {
+        if (c.o == null || c.h == null || c.l == null || c.c == null) continue;
+        if (!isFinite(c.o) || !isFinite(c.h) || !isFinite(c.l) || !isFinite(c.c)) continue;
+        byTime.set(Math.floor(c.t / 1000), c);
+      }
+      const seriesData: CandlestickData[] = [...byTime.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([sec, c]) => ({
+          time: sec as UTCTimestamp,
+          open: c.o,
+          high: c.h,
+          low: c.l,
+          close: c.c,
+        }));
       try {
         seriesRef.current?.setData(seriesData);
         // Zoom to the most recent N bars so each candle is readable
@@ -666,14 +672,9 @@ export default function PatternLiveChart({ symbol, onSymbolChange }: Props) {
               </button>
             ))}
           </div>
-          <select
-            value={symbol}
-            onChange={(e) => onSymbolChange(e.target.value)}
-            className="bg-bg-elevated border border-bg-border rounded px-2 py-1 text-xs text-slate-200 font-mono"
-          >
-            {!SYMBOL_UNIVERSE.includes(symbol) && symbol && <option value={symbol}>{symbol}</option>}
-            {SYMBOL_UNIVERSE.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
+          {/* Active symbol — driven by the page's symbol search (all 22k
+              listed stocks), not a universe-limited dropdown. */}
+          <span className="font-mono text-sm font-semibold text-brand-gradient px-1">{symbol}</span>
         </div>
       </div>
 

@@ -33,8 +33,16 @@ export default function ChanAdvisorCard({ symbol }: Props) {
     setLoading(true);
     setErr(null);
     const r = await fetchChanRecommendation(symbol);
-    if (!r) setErr("Chan advisor unavailable. Restart ai-service.");
-    setData(r);
+    if (r && "error" in r) {
+      setErr(
+        r.error === "no_data"
+          ? `No price history for ${symbol} on Yahoo Finance — the ticker may be renamed (e.g. ZOMATO → ETERNAL) or delisted. Try searching by company name.`
+          : "Chan advisor unavailable. Restart ai-service."
+      );
+      setData(null);
+    } else {
+      setData(r);
+    }
     setLoading(false);
   };
 

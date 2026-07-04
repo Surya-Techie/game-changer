@@ -245,6 +245,26 @@ def forward_return_label(df: pd.DataFrame, anchor_idx: int, horizon: int, thresh
 
 # ─── Model registry ────────────────────────────────────────────────────────
 
+# Quality gate: a trained model only participates in live scoring when its
+# HELD-OUT accuracy clears baseline by a real margin. A memorised model
+# (99% train / 48% test) feeding the confidence engine's 25 ML points is
+# worse than no model — it adds confident-sounding noise. Tunable so a
+# deliberate operator can lower it for experimentation.
+MIN_TEST_ACCURACY = float(os.environ.get("PATTERN_ML_MIN_TEST_ACC", "0.55"))
+
+
+def _passes_quality_gate(metrics: Dict[str, Any]) -> bool:
+    """True when at least one of the two models beats baseline on the test
+    split. Metrics shape: {"gb": {"test": {"accuracy": ...}}, "mlp": {...}}."""
+    best = 0.0
+    for m in ("gb", "mlp"):
+        try:
+            best = max(best, float(metrics[m]["test"]["accuracy"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return best >= MIN_TEST_ACCURACY
+
+
 @dataclass
 class TimeframeModel:
     timeframe: str
@@ -253,9 +273,10 @@ class TimeframeModel:
     feature_version: int = FEATURE_VERSION
     trained_at: Optional[str] = None
     metrics: Dict[str, Any] = field(default_factory=dict)
+    quality_ok: bool = True
 
     def ready(self) -> bool:
-        return self.gb_model is not None and self.mlp_model is not None
+        return self.gb_model is not None and self.mlp_model is not None and self.quality_ok
 
 
 _REGISTRY: Dict[str, TimeframeModel] = {}
@@ -294,6 +315,7 @@ def _load_into_registry(timeframe: str) -> TimeframeModel:
                 tm.trained_at = meta.get("trained_at")
                 tm.feature_version = int(meta.get("feature_version", FEATURE_VERSION))
                 tm.metrics = meta.get("metrics", {})
+                tm.quality_ok = _passes_quality_gate(tm.metrics)
         except Exception:  # noqa: BLE001 — model files may be corrupt; treat as not-loaded
             tm = TimeframeModel(timeframe=timeframe)
         _REGISTRY[timeframe] = tm
@@ -335,6 +357,7 @@ def registry_status() -> dict:
         tm = _REGISTRY.get(tf) or TimeframeModel(timeframe=tf)
         info[tf] = {
             "ready": tm.ready(),
+            "quality_ok": tm.quality_ok,
             "trained_at": tm.trained_at,
             "feature_version": tm.feature_version,
             "metrics": tm.metrics,

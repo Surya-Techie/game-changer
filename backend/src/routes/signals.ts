@@ -53,48 +53,64 @@ router.get("/accuracy", async (req, res, next) => {
     // the response cheap). Defaults give roughly the last few hundred trades.
     const limit = Math.min(2000, Math.max(50, Number(req.query.limit) || 500));
     const symbolFilter = (req.query.symbol as string | undefined)?.toUpperCase();
+    // ?source=live | synthetic | all (default all). "live" restricts the
+    // hit rate to signals generated from real NSE ticks — synthetic dev-feed
+    // signals say nothing about real-market accuracy.
+    const source = ((req.query.source as string | undefined) ?? "all").toLowerCase();
     const filter: Record<string, unknown> = { action: { $in: ["BUY", "SELL"] } };
     if (symbolFilter) filter.symbol = symbolFilter;
+    if (source === "live") filter.dataSource = "live";
+    else if (source === "synthetic") filter.dataSource = { $ne: "live" };
 
     const rows = await Signal.find(filter)
       .sort({ createdAt: -1 })
       .limit(limit)
-      .select("symbol outcome")
+      .select("symbol outcome dataSource")
       .lean();
 
     const overall = bucket("ALL");
+    const liveOnly = bucket("ALL");
     const bySymbol = new Map<string, AccuracyBucket>();
 
     for (const r of rows) {
       overall.total++;
+      const isLive = (r as { dataSource?: string }).dataSource === "live";
+      if (isLive) liveOnly.total++;
       const sym = bySymbol.get(r.symbol) ?? bucket(r.symbol);
       sym.total++;
       switch (r.outcome) {
         case "WIN":
           overall.wins++;
           sym.wins++;
+          if (isLive) liveOnly.wins++;
           break;
         case "LOSS":
           overall.losses++;
           sym.losses++;
+          if (isLive) liveOnly.losses++;
           break;
         case "EXPIRED":
           overall.expired++;
           sym.expired++;
+          if (isLive) liveOnly.expired++;
           break;
         default:
           overall.pending++;
           sym.pending++;
+          if (isLive) liveOnly.pending++;
       }
       bySymbol.set(r.symbol, sym);
     }
 
     finalize(overall);
+    finalize(liveOnly);
     const perSymbol = Array.from(bySymbol.values()).map(finalize);
 
     res.json({
       window: limit,
+      source,
       overall,
+      liveOnly,
       perSymbol,
       // Reminder for any UI/consumer that wants to display this honestly.
       disclaimer:

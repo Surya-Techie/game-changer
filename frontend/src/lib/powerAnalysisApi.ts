@@ -10,7 +10,8 @@ import { api } from "./api";
  */
 
 export type PowerAction = "BUY" | "SELL" | "HOLD";
-export type PowerMode = "strict" | "loose";
+/** Single POWER rule; "strict"/"loose" remain only as legacy aliases. */
+export type PowerMode = "power" | "strict" | "loose";
 
 export interface PowerVote {
   strategy: string;
@@ -69,6 +70,8 @@ export interface PowerAccuracy {
   avg_per_trade_pct: number;
   total_return_pct: number;
   unresolved_signals: number;
+  /** Round-trip cost (%) already deducted from every per-trade return. */
+  round_trip_cost_pct?: number;
   honest_note?: string;
   note?: string;
 }
@@ -118,7 +121,7 @@ export async function fetchPowerAnalysis(opts: {
     const body: Record<string, unknown> = {
       symbol: opts.symbol.toUpperCase(),
       candles: opts.candles,
-      mode: opts.mode ?? "strict",
+      mode: opts.mode ?? "power",
       useMl: opts.useMl ?? false,
       targetR: opts.targetR ?? 2,
     };

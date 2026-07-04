@@ -15,8 +15,58 @@ body,
 body {
   font-family: "Inter", "Plus Jakarta Sans", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
-  background: #05070f;
+  background: #030509;
   overflow-x: hidden;
+}
+
+/* ─── Aurora Terminal backdrop ────────────────────────────────────────────
+   Two fixed layers behind the app:
+   ::before — a fine engineering grid, radially masked toward the top, that
+              gives every page the "terminal" texture.
+   ::after  — four pre-blurred aurora blobs (indigo / cyan / emerald / rose)
+              drifting on a slow transform loop. transform-only animation =
+              GPU-composited, no repaints.                                  */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.045) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(ellipse 95% 80% at 50% 0%, black 0%, transparent 78%);
+  mask-image: radial-gradient(ellipse 95% 80% at 50% 0%, black 0%, transparent 78%);
+}
+
+@keyframes aurora-drift {
+  0%, 100% { transform: translate3d(-3%, -2%, 0) scale(1) rotate(0.001deg); }
+  50%      { transform: translate3d(3%, 2.5%, 0) scale(1.07) rotate(0.001deg); }
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: -18%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(38% 30% at 18% 12%, rgba(99, 102, 241, 0.17), transparent 70%),
+    radial-gradient(30% 26% at 82% 6%, rgba(34, 211, 238, 0.11), transparent 70%),
+    radial-gradient(34% 30% at 78% 88%, rgba(16, 185, 129, 0.10), transparent 70%),
+    radial-gradient(24% 22% at 6% 82%, rgba(244, 63, 94, 0.055), transparent 70%);
+  animation: aurora-drift 26s ease-in-out infinite;
+  will-change: transform;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::after { animation: none; }
 }
 
 /* Custom Premium Scrollbar */
@@ -89,6 +139,85 @@ body {
   cursor: not-allowed !important;
 }
 
+/* ─── Aurora design-language utilities ──────────────────────────────────── */
+
+/* Gradient-border glass card: 1px border painted by a diagonal aurora
+   gradient (border-box) over a translucent panel fill (padding-box). */
+.card-aurora {
+  position: relative;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(rgba(10, 15, 30, 0.62), rgba(10, 15, 30, 0.62)) padding-box,
+    linear-gradient(135deg, rgba(99, 102, 241, 0.38), rgba(34, 211, 238, 0.14) 40%, rgba(255, 255, 255, 0.06) 75%) border-box;
+  transition: box-shadow 0.25s ease, transform 0.25s ease;
+}
+.card-aurora:hover {
+  box-shadow: 0 0 24px rgba(99, 102, 241, 0.12), 0 12px 32px -16px rgba(0, 0, 0, 0.9);
+}
+
+/* Hover shine sweep — a light band crosses the surface once per hover. */
+.shine {
+  position: relative;
+  overflow: hidden;
+}
+.shine::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 42%, rgba(255, 255, 255, 0.07) 50%, transparent 58%);
+  transform: translateX(-120%);
+  transition: transform 0.7s ease;
+  pointer-events: none;
+}
+.shine:hover::after {
+  transform: translateX(120%);
+}
+
+/* Brand gradient text (logo, hero numbers). */
+.text-brand-gradient {
+  background: linear-gradient(120deg, #a5b4fc 0%, #22d3ee 55%, #34d399 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Neon value glows for P&L numbers. */
+.value-glow-buy  { text-shadow: 0 0 16px rgba(16, 185, 129, 0.5); }
+.value-glow-sell { text-shadow: 0 0 16px rgba(244, 63, 94, 0.5); }
+
+/* Ticker tape: the track holds the item list twice; animating to -50%
+   loops seamlessly. Pauses on hover. */
+.ticker-track {
+  display: flex;
+  width: max-content;
+  animation: ticker 48s linear infinite;
+}
+.ticker-track:hover {
+  animation-play-state: paused;
+}
+@keyframes ticker {
+  to { transform: translateX(-50%); }
+}
+
+/* Spinning conic ring for the brand mark. */
+.brand-ring {
+  background: conic-gradient(from 0deg, #6366f1, #22d3ee, #34d399, #6366f1);
+  animation: spin 9s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ticker-track, .brand-ring { animation: none; }
+}
+
+/* Keyboard focus ring, app-wide. */
+:focus-visible {
+  outline: 2px solid rgba(99, 102, 241, 0.6);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
 /* Glow Keyframe Animations */
 @keyframes pulse-glow {
   0%, 100% {
@@ -120,6 +249,17 @@ body {
 body.qti-light {
   background: #f1f3f9 !important;
   color: #0f172a !important;
+}
+body.qti-light::before,
+body.qti-light::after { display: none; }
+body.qti-light .card-aurora {
+  background: rgba(255, 255, 255, 0.85) !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+}
+body.qti-light .text-brand-gradient {
+  background: linear-gradient(120deg, #4f46e5, #0891b2);
+  -webkit-background-clip: text;
+  background-clip: text;
 }
 body.qti-light .text-white { color: #0f172a !important; }
 body.qti-light .text-slate-200 { color: #1e293b !important; }

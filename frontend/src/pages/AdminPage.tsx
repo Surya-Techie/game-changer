@@ -47,7 +47,7 @@ export default function AdminPage() {
   const [tab, setTab] = useState<"system" | "users" | "signals" | "audit" | "patterns">("system");
 
   return (
-    <div className="min-h-screen bg-app-radial text-slate-200">
+    <div className="min-h-full bg-app-radial text-slate-200">
       <header className="border-b border-bg-border bg-bg-panel-solid/60 backdrop-blur-glass px-6 py-4 flex items-center justify-between">
         <div>
           <Link to="/" className="text-xs text-slate-500 hover:text-white">← Dashboard</Link>
@@ -143,7 +143,11 @@ function SystemTab() {
   const q = useQuery({
     queryKey: ["admin", "system"],
     queryFn: async () => (await api.get("/api/admin/system")).data as SystemStats,
-    refetchInterval: 5000,
+    // Stop the 5 s poll once the server says Forbidden — a non-admin tab
+    // was hammering the endpoint with a 403 every cycle.
+    refetchInterval: (query) => (query.state.error ? false : 5000),
+    retry: (count, err) =>
+      (err as { response?: { status?: number } })?.response?.status === 403 ? false : count < 2,
   });
   if (q.isLoading && !q.data) return <Skeleton rows={6} />;
   if (q.isError) return <AdminGate error={q.error} onRecovered={() => qc.invalidateQueries({ queryKey: ["admin"] })} />;

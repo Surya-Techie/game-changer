@@ -34,13 +34,16 @@ export default function Sidebar({ symbols, prices, prevPrices, active, onSelect 
 
   return (
     <aside className="w-64 shrink-0 bg-bg-panel border-r border-bg-border flex flex-col backdrop-blur-glass shadow-xl select-none z-20">
-      {/* Brand Header */}
-      <div className="px-6 py-5 border-b border-bg-border flex items-center gap-2.5">
-        <div className="relative flex items-center justify-center h-9 w-9 rounded-xl bg-gradient-to-tr from-accent-info to-indigo-700 shadow-glow-indigo">
-          <Activity className="h-5 w-5 text-white animate-pulse-slow" />
+      {/* Brand Header — spinning aurora ring around the mark */}
+      <div className="px-6 py-5 border-b border-bg-border flex items-center gap-3">
+        <div className="relative h-10 w-10 shrink-0">
+          <div className="brand-ring absolute inset-0 rounded-xl opacity-80" />
+          <div className="absolute inset-[2px] rounded-[10px] bg-bg-panel-solid flex items-center justify-center shadow-glow-brand">
+            <Activity className="h-5 w-5 text-accent-cyan" />
+          </div>
         </div>
         <div>
-          <div className="text-base font-extrabold tracking-tight text-white font-display flex items-center gap-1.5">
+          <div className="text-base font-extrabold tracking-tight font-display flex items-center gap-1.5 text-brand-gradient">
             QTI <span className="h-1.5 w-1.5 rounded-full bg-accent-buy animate-pulse" />
           </div>
           <div className="text-[10px] font-medium tracking-wider text-slate-500 uppercase">
@@ -183,22 +186,25 @@ export default function Sidebar({ symbols, prices, prevPrices, active, onSelect 
                   <button
                     onClick={() => onSelect(s)}
                     className={clsx(
-                      "w-full text-left px-3 py-2 rounded-lg flex items-center justify-between text-sm transition-all duration-200 border border-transparent",
+                      "w-full text-left px-3 py-2 rounded-lg flex items-center justify-between text-sm transition-all duration-200 border",
                       isSelected
-                        ? "bg-bg-elevated text-white border-bg-border/80 shadow-sm"
-                        : "hover:bg-bg-elevated/45 text-slate-400 hover:text-slate-200"
+                        ? "card-aurora text-white shadow-sm"
+                        : "border-transparent hover:bg-bg-elevated/45 text-slate-400 hover:text-slate-200"
                     )}
                   >
-                    <span className={clsx("font-medium", isSelected ? "text-white" : "text-slate-300")}>{s}</span>
+                    <span className={clsx("font-medium flex items-center gap-2", isSelected ? "text-white" : "text-slate-300")}>
+                      {isSelected && <span className="h-1 w-1 rounded-full bg-accent-cyan shadow-glow-cyan" />}
+                      {s}
+                    </span>
                     <span
                       className={clsx(
-                        "tabular-nums font-mono font-semibold",
+                        "tabular-nums font-mono font-semibold px-1.5 py-0.5 rounded-md text-[13px]",
                         !price
                           ? "text-slate-500"
                           : up
-                          ? "text-accent-buy"
+                          ? "text-accent-buy bg-accent-buy/5"
                           : delta < 0
-                          ? "text-accent-sell"
+                          ? "text-accent-sell bg-accent-sell/5"
                           : "text-slate-300"
                       )}
                     >
@@ -243,14 +249,14 @@ function NavLink({ to, icon, label, active }: NavLinkProps) {
         "relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200 group border border-transparent",
         active
           ? "bg-active-gradient text-white border-bg-border/60 shadow-sm"
-          : "text-slate-400 hover:text-slate-200 hover:bg-bg-elevated/20"
+          : "text-slate-400 hover:text-slate-200 hover:bg-bg-elevated/20 hover:translate-x-0.5"
       )}
     >
-      {/* Active Left Indicator Bar */}
+      {/* Active Left Indicator Bar — aurora gradient */}
       {active && (
-        <span className="absolute left-0 top-2 bottom-2 w-0.5 bg-accent-info rounded-r shadow-glow-indigo" />
+        <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-gradient-to-b from-accent-info via-accent-cyan to-accent-buy shadow-glow-indigo" />
       )}
-      <span className={clsx("transition-transform duration-200 shrink-0", active ? "text-accent-info scale-110" : "text-slate-500 group-hover:text-slate-300 group-hover:scale-105")}>
+      <span className={clsx("transition-transform duration-200 shrink-0", active ? "text-accent-cyan scale-110" : "text-slate-500 group-hover:text-slate-300 group-hover:scale-105")}>
         {icon}
       </span>
       <span className="font-medium truncate flex-1">{label}</span>

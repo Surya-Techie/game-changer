@@ -9,7 +9,19 @@ router.use(requireAuth);
 
 router.get("/", async (req, res, next) => {
   try {
-    const lists = await Watchlist.find({ userId: req.user!.userId }).lean();
+    let lists = await Watchlist.find({ userId: req.user!.userId }).lean();
+    // Users created outside /register (the shared dev identity when auth is
+    // disabled, or DB resets) have no watchlist — the dashboard then renders
+    // an empty sidebar with no active symbol. Seed the same Default list
+    // register creates so the app is usable out of the box.
+    if (lists.length === 0) {
+      await Watchlist.create({
+        userId: req.user!.userId,
+        name: "Default",
+        symbols: ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK"],
+      });
+      lists = await Watchlist.find({ userId: req.user!.userId }).lean();
+    }
     res.json({ watchlists: lists });
   } catch (err) {
     next(err);

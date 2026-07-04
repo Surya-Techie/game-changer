@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
-import { getCandles } from "../services/candleAggregator.js";
+import { getCandlesSmart } from "../services/candleAggregator.js";
 import { getPowerAnalysis, type CandleIn } from "../services/aiClient.js";
 
 /**
@@ -33,7 +33,7 @@ router.post("/", async (req, res, next) => {
     if (Array.isArray(req.body?.candles) && req.body.candles.length > 0) {
       candles = req.body.candles as CandleIn[];
     } else {
-      const c = getCandles(String(symbol).toUpperCase(), 500);
+      const c = await getCandlesSmart(String(symbol).toUpperCase(), 500);
       candles = c.map((b) => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v }));
     }
 

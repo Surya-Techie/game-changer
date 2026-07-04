@@ -25,10 +25,12 @@ Quality filters applied AFTER the vote tally:
   * Volatility compression — `detect_volatility_contraction_pattern` BOOSTS
                             the confidence on breakouts (Wyckoff/Minervini).
 
-Decision rule (intentionally STRICT — this is the "high power" composer):
-  * Strict mode (default): majority of active sources must agree (allowing
-    at most one dissent) AND the geometric-mean confidence ≥ 0.60.
-  * Loose mode: ≥ 2 sources agree AND geo-mean ≥ 0.55.
+Decision rule — single POWER mode:
+  * PPS + classical strategy must BOTH vote the same direction (they are
+    the only voters with concrete entry/stop/target), geometric-mean
+    confidence ≥ 0.60, no fake-breakout against the call, and the
+    higher-timeframe (×6-aggregated) trend must not be clearly against
+    the direction. One rule, no strict/loose split.
 
 Target multiple of risk is configurable per-call via `target_r`. The
 default of 2.0 yields the highest closed-trade win rate (~70–85%); 4.0
@@ -85,6 +87,16 @@ except Exception:  # pragma: no cover
     _detect_stage = None       # type: ignore[assignment]
     _compute_master_confluence = None  # type: ignore[assignment]
 
+# ensure_df normalises + MARKS a frame; every detector's own ensure_df call
+# then short-circuits. Normalising once per bar (instead of ~80 times, once
+# inside each detector) is the difference between the historical scan
+# finishing in seconds vs timing out the backend request.
+try:
+    from patterns._helpers import ensure_df as _ensure_df
+except Exception:  # pragma: no cover
+    def _ensure_df(df: pd.DataFrame) -> pd.DataFrame:  # type: ignore[misc]
+        return df
+
 
 def _to_weekly(candles: List[dict]) -> pd.DataFrame:
     """Aggregate daily OHLCV → weekly using ISO week-of-year buckets.
@@ -118,7 +130,20 @@ def _daily_df_from_candles(candles: List[dict]) -> pd.DataFrame:
                                 "l": "low", "c": "close", "v": "volume"}).reset_index(drop=True)
 
 
-Mode = Literal["strict", "loose"]
+# Single POWER decision rule. The old strict/loose split confused users
+# and measured worse (loose: 121 trades, PF 0.99 = coin flip after costs).
+# "strict"/"loose" remain accepted for API compatibility but both run the
+# same POWER rule now.
+Mode = Literal["power", "strict", "loose"]
+
+
+# Round-trip trading cost (% of notional) deducted from EVERY simulated
+# trade's return: ~0.03% brokerage/side + STT/exchange charges + ~2 bps
+# slippage/side. NSE cash delivery runs nearer 0.25%, pure intraday nearer
+# 0.10% — one conservative middle number keeps the reported expectancy
+# honest without plumbing the timeframe through. Win/loss classification
+# on target/stop hits is unaffected; time-outs are bucketed by NET sign.
+ROUND_TRIP_COST_PCT = 0.20
 
 
 # Per-source weight in the consensus tally. Sources with measured edge get
@@ -208,6 +233,7 @@ def _pattern_library_vote(df: pd.DataFrame) -> Tuple[Optional[str], float, List[
     # Without this rename the detectors silently fail every call.
     if any(c[0].isupper() for c in df.columns):
         df = df.rename(columns=str.lower)
+    df = _ensure_df(df)
     bull_w = 0.0
     bear_w = 0.0
     bull_names: List[str] = []
@@ -272,6 +298,7 @@ def _fakey_against(df: pd.DataFrame, intended_dir: str) -> bool:
         return False
     if any(c[0].isupper() for c in df.columns):
         df = df.rename(columns=str.lower)
+    df = _ensure_df(df)
     try:
         if intended_dir == "BUY":
             r = detect_bearish_fakey(df)   # bearish fakey vetoes a BUY
@@ -300,6 +327,34 @@ def _volume_confirmed(df: pd.DataFrame, min_ratio: float = 1.2) -> bool:
         return True
 
 
+def _higher_tf_trend_against(candles: List[dict], direction: str, factor: int = 6) -> Optional[bool]:
+    """True when the ×factor-aggregated (higher-timeframe) trend is CLEARLY
+    against `direction` — close below a falling structure for a BUY, or
+    above a rising one for a SELL. This is the pro-trader regime rule the
+    POWER mode adds over the old strict mode: a valid-looking setup that
+    fights the higher timeframe is the classic losing trade.
+
+    Deliberately mild: it only blocks when BOTH the close and the fast SMA
+    sit on the wrong side of the slow SMA. Returns None (abstain) when
+    there isn't enough history to aggregate ~46 higher-TF bars.
+    """
+    n = len(candles)
+    buckets = n // factor
+    if buckets < 46:  # SMA-40 + slope window on the aggregated series
+        return None
+    start = n - buckets * factor  # right-aligned so the last bucket ends now
+    closes: List[float] = []
+    for b in range(buckets):
+        seg = candles[start + b * factor: start + (b + 1) * factor]
+        closes.append(float(seg[-1]["c"]))
+    s40 = sum(closes[-40:]) / 40.0
+    s18 = sum(closes[-18:]) / 18.0
+    c = closes[-1]
+    if direction == "BUY":
+        return c < s40 and s18 < s40
+    return c > s40 and s18 > s40
+
+
 def _volatility_compressed(df: pd.DataFrame) -> bool:
     """Did a Volatility Contraction Pattern just complete? Used as a
     confidence BOOSTER (not a gate) on breakouts. This is the core
@@ -308,6 +363,7 @@ def _volatility_compressed(df: pd.DataFrame) -> bool:
         return False
     if any(c[0].isupper() for c in df.columns):
         df = df.rename(columns=str.lower)
+    df = _ensure_df(df)
     try:
         r = detect_volatility_contraction_pattern(df)
         return bool(r and r.get("detected"))
@@ -322,6 +378,7 @@ def _decide_at_bar(
     symbol: str,
     use_ml: bool,
     mode: Mode,
+    ml_pred: Optional[dict] = None,
 ) -> dict:
     """Compose the four sources for one bar. Returns the bar's verdict dict."""
     n = len(candles_to_here)
@@ -370,11 +427,16 @@ def _decide_at_bar(
         if pl_dir is not None and pl_conf > 0:
             votes.append((pl_dir, pl_conf * SOURCE_WEIGHT["pattern_library"], "pattern_library"))
 
-    # ── 4) ML vote (only when measured edge exists)
+    # ── 4) ML vote (only when measured edge exists). During a historical
+    #     scan the caller precomputes every bar's prediction in one
+    #     vectorised pass (ml_pred); the per-bar predict fallback stays
+    #     for any caller that evaluates a single bar.
     if use_ml:
         try:
-            from ml_training import predict_with_trained  # lazy
-            mlr = predict_with_trained(symbol, candles_to_here)
+            mlr = ml_pred
+            if mlr is None:
+                from ml_training import predict_with_trained  # lazy
+                mlr = predict_with_trained(symbol, candles_to_here)
             if _ml_has_edge(mlr):
                 direction = mlr.get("direction")
                 if direction == "UP":
@@ -389,9 +451,10 @@ def _decide_at_bar(
     # confidence; Stage 4 votes SELL with full confidence; Stage 1/3 vote
     # is suppressed (returned at capped confidence by the detector itself).
     stage_info: Optional[dict] = None
+    weekly_df: Optional[pd.DataFrame] = None
     if _STAGE_MASTER_OK:
         try:
-            weekly_df = _to_weekly(candles_to_here)
+            weekly_df = _ensure_df(_to_weekly(candles_to_here))
             if len(weekly_df) >= 30:
                 stage_info = _detect_stage(weekly_df)
                 s_stage = int(stage_info.get("current_stage") or 0)
@@ -407,8 +470,9 @@ def _decide_at_bar(
     master_info: Optional[dict] = None
     if _STAGE_MASTER_OK:
         try:
-            daily_df = _daily_df_from_candles(candles_to_here)
-            weekly_df = _to_weekly(candles_to_here)
+            daily_df = _ensure_df(_daily_df_from_candles(candles_to_here))
+            if weekly_df is None:
+                weekly_df = _ensure_df(_to_weekly(candles_to_here))
             if len(daily_df) >= 80 and len(weekly_df) >= 30:
                 master_info = _compute_master_confluence(symbol, daily_df, weekly_df)
                 m_signal = master_info.get("signal") or "NO_TRADE"
@@ -454,27 +518,22 @@ def _decide_at_bar(
                      votes=[{"strategy": v[2], "direction": v[0], "confidence": round(v[1], 3)} for v in votes])
 
     confs = by_dir[agreed]
-    # Strict mode (the "accuracy" mode):
+    # POWER rule (the only mode):
     #   PPS + classical strategy MUST both vote the same direction.
     #   These are the only two voters with concrete entry/stop/target
     #   and measured 2y per-trade edge. Other voters (composite,
     #   pattern_library, ml) are recorded in the `votes` array and
     #   contribute to composite_confidence, but cannot block a valid
-    #   PPS+strategy consensus from emitting.
-    # Loose mode:
-    #   Any ≥ 2 voters agree, composite ≥ 0.55.
-    n_active = len(votes)
-    if mode == "strict":
-        anchor_votes = [v for v in votes if v[2] in ("pps", "strategy")]
-        anchor_dirs = {v[0] for v in anchor_votes}
-        if len(anchor_votes) < 2 or len(anchor_dirs) != 1:
-            return _hold("anchors_disagree_or_missing", 0.0,
-                         votes=[{"strategy": v[2], "direction": v[0], "confidence": round(v[1], 3)} for v in votes])
-        min_agree = 2  # anchors already verified
-        min_composite = 0.60
-    else:
-        min_agree = 2
-        min_composite = 0.55
+    #   PPS+strategy consensus from emitting. On top of that, the
+    #   higher-timeframe regime gate below refuses any signal that
+    #   fights the aggregated higher-TF trend.
+    anchor_votes = [v for v in votes if v[2] in ("pps", "strategy")]
+    anchor_dirs = {v[0] for v in anchor_votes}
+    if len(anchor_votes) < 2 or len(anchor_dirs) != 1:
+        return _hold("anchors_disagree_or_missing", 0.0,
+                     votes=[{"strategy": v[2], "direction": v[0], "confidence": round(v[1], 3)} for v in votes])
+    min_agree = 2  # anchors already verified
+    min_composite = 0.60
     if len(confs) < min_agree:
         return _hold(f"only_{len(confs)}_of_{min_agree}_required",
                      0.0,
@@ -489,6 +548,16 @@ def _decide_at_bar(
     # These are the "world-class trader" gates: even when the vote tally
     # passes, real money waits for confirmation.
     filters_applied: List[str] = []
+
+    # Higher-timeframe regime gate — POWER mode's core upgrade. A setup
+    # that looks valid on this timeframe but fights the aggregated
+    # higher-TF trend is the classic losing trade; refuse it outright.
+    htf_against = _higher_tf_trend_against(candles_to_here, agreed)
+    if htf_against is True:
+        return _hold("higher_tf_trend_against", composite,
+                     votes=[{"strategy": v[2], "direction": v[0], "confidence": round(v[1], 3)} for v in votes])
+    filters_applied.append("higher_tf_aligned" if htf_against is False else "higher_tf_unavailable")
+
     if df is not None:
         # Fake-breakout veto — institutional traders' #1 trap-avoider.
         if _fakey_against(df, agreed):
@@ -575,7 +644,7 @@ def run_power_analysis(
     candles: List[dict],
     *,
     symbol: str = "UNKNOWN",
-    mode: Mode = "strict",
+    mode: Mode = "power",
     use_ml: bool = False,
     dedupe_window: int = 5,
     target_r: float = 2.0,
@@ -587,8 +656,8 @@ def run_power_analysis(
     Args:
         candles: OHLCV bars with {t, o, h, l, c, v}.
         symbol: used by ML lookup.
-        mode: "strict" (majority of active sources, allowing one dissent,
-              composite ≥ 0.60) or "loose" (≥ 2 sources, composite ≥ 0.55).
+        mode: kept for API compatibility — "power", "strict", and "loose"
+              all run the same single POWER rule now.
         use_ml: include the ML vote — costs ~50 ms per bar with a trained
                 model; default off so historical scans stay snappy.
         dedupe_window: drop a signal if the previous BUY/SELL of the same
@@ -639,6 +708,17 @@ def run_power_analysis(
         pps_bars, stop_pct=stop_pct, target_pct=target_pct
     )
 
+    # Precompute the ML vote for EVERY bar in one vectorised pass. The old
+    # per-bar predict_with_trained rebuilt the full feature matrix on each
+    # prefix (O(n²)) — ~60 s alone on a 250-bar daily scan.
+    ml_preds: Dict[int, dict] = {}
+    if use_ml:
+        try:
+            from ml_training import predict_series_with_trained  # lazy
+            ml_preds = predict_series_with_trained(symbol, candles)
+        except Exception:  # pragma: no cover
+            ml_preds = {}
+
     out: List[dict] = []
     last_idx_by_dir: Dict[str, int] = {"BUY": -10_000, "SELL": -10_000}
     for i in range(n):
@@ -652,6 +732,10 @@ def run_power_analysis(
             symbol=symbol,
             use_ml=use_ml,
             mode=mode,
+            # A bar with no precomputed row gets a NOT-READY stub, never
+            # None — None would trigger the per-bar predict fallback and
+            # reintroduce the O(n²) scan this precompute exists to avoid.
+            ml_pred=ml_preds.get(i, {"ready": False}),
         )
         # De-dupe consecutive same-direction calls within `dedupe_window` bars.
         if verdict["signal"] in ("BUY", "SELL"):
@@ -704,7 +788,9 @@ def run_power_analysis(
 
     return {
         "symbol": symbol,
-        "mode": mode,
+        # Always report "power" — strict/loose are accepted as aliases but
+        # there is only one decision rule now.
+        "mode": "power",
         "target_r": target_r,
         "stop_pct": stop_pct,
         "target_pct": target_pct,
@@ -740,41 +826,83 @@ def _resolve_outcome(
 ) -> Tuple[str, float]:
     """Walk forward from a signal's bar until target or stop hits.
 
-    Returns (outcome, pct_return) where outcome is 'win' or 'loss'.
-    Time-out bars are bucketed by sign of the close-out PnL — that mirrors
-    what a live trader actually does (exit at market when the timer fires).
-    Conservative tie-break: if a single bar's high/low straddles both
-    target and stop, count as LOSS.
+    Returns (outcome, pct_return) — outcome is 'win', 'loss', or 'skip'
+    (setup invalidated before it could fill; not a trade).
 
-    A signal with missing entry/stop/target is treated as not-resolvable
-    and returns ("loss", 0.0) — those should be filtered before counting.
+    Fill model — deliberately conservative, mirrors a real order ticket:
+      * Entry fills at the NEXT bar's OPEN. The signal only exists once
+        its bar has closed, so the signal bar's close is not obtainable.
+      * Fixed-% envelopes (signals carrying stop_pct/target_pct) are
+        re-anchored to the actual fill — exactly where the live bracket
+        order would sit. Pattern-derived absolute levels stay absolute.
+      * A bar that OPENS beyond the stop exits at that open (gap-through
+        slippage — the stop price itself was never available). A bar that
+        opens beyond the target is credited only the target.
+      * Absolute-level setups whose stop or target is already breached at
+        the would-be fill open are SKIPPED (a trader would not enter).
+      * If a single bar's high/low straddles both target and stop, LOSS.
+      * Time-out exits at the horizon close, bucketed by the sign of the
+        NET return — a flat scratch minus costs is a loss in a real account.
+    Every return is net of ROUND_TRIP_COST_PCT.
     """
     if signal.get("entry_price") is None or signal.get("stop_loss") is None or signal.get("target_price") is None:
         return ("loss", 0.0)
+    fill_idx = start_idx + 1
+    if fill_idx >= len(candles):
+        return ("skip", 0.0)
     is_buy = signal["signal"] == "BUY"
-    entry = float(signal["entry_price"])
-    stop = float(signal["stop_loss"])
-    target = float(signal["target_price"])
+    side = 1.0 if is_buy else -1.0
+    entry = float(candles[fill_idx]["o"])
+    if not entry > 0:
+        return ("skip", 0.0)
+
+    fixed_stop = signal.get("stop_pct")
+    fixed_tgt = signal.get("target_pct")
+    if fixed_stop is not None and float(fixed_stop) > 0:
+        sp = float(fixed_stop) / 100.0
+        stop = entry * (1 - sp) if is_buy else entry * (1 + sp)
+    else:
+        stop = float(signal["stop_loss"])
+    if fixed_tgt is not None and float(fixed_tgt) > 0:
+        tp = float(fixed_tgt) / 100.0
+        target = entry * (1 + tp) if is_buy else entry * (1 - tp)
+    else:
+        target = float(signal["target_price"])
+
+    # Absolute levels already breached at the fill open → setup gone.
+    if is_buy and (entry <= stop or entry >= target):
+        return ("skip", 0.0)
+    if not is_buy and (entry >= stop or entry <= target):
+        return ("skip", 0.0)
+
+    cost = ROUND_TRIP_COST_PCT / 100.0
+
+    def net(exit_price: float) -> float:
+        return (exit_price - entry) / entry * side - cost
+
     end_idx = min(start_idx + horizon_bars + 1, len(candles))
-    for j in range(start_idx + 1, end_idx):
+    for j in range(fill_idx, end_idx):
         c = candles[j]
+        o, h, l = float(c["o"]), float(c["h"]), float(c["l"])
+        # Gap through the stop (only possible after the fill bar): the
+        # exit is the open actually printed, not the stop level.
+        if j > fill_idx and ((is_buy and o <= stop) or (not is_buy and o >= stop)):
+            return ("loss", net(o))
         if is_buy:
-            hit_stop = float(c["l"]) <= stop
-            hit_tgt = float(c["h"]) >= target
+            hit_stop = l <= stop
+            hit_tgt = h >= target
         else:
-            hit_stop = float(c["h"]) >= stop
-            hit_tgt = float(c["l"]) <= target
-        if hit_stop and hit_tgt:
-            return ("loss", (stop - entry) / entry * (1 if is_buy else -1))
-        if hit_stop:
-            return ("loss", (stop - entry) / entry * (1 if is_buy else -1))
+            hit_stop = h >= stop
+            hit_tgt = l <= target
+        if hit_stop:                    # both-touch also lands here → LOSS
+            return ("loss", net(stop))
         if hit_tgt:
-            return ("win", (target - entry) / entry * (1 if is_buy else -1))
+            return ("win", net(target))
     # Time exit at the horizon bar's close.
-    if end_idx <= start_idx + 1:
-        return ("loss", 0.0)
+    if end_idx <= fill_idx:
+        return ("skip", 0.0)
     last_close = float(candles[end_idx - 1]["c"])
-    pct = (last_close - entry) / entry * (1 if is_buy else -1)
+    pct = net(last_close)
     return ("win" if pct > 0 else "loss"), pct
 
 
@@ -821,6 +949,9 @@ def _measure_accuracy(
             unresolved += 1
             continue
         outcome, ret = _resolve_outcome(s, candles, bar_idx, horizon_bars)
+        if outcome == "skip":
+            unresolved += 1
+            continue
         pnl_pcts.append(ret * 100.0)
         if outcome == "win":
             wins += 1
@@ -844,9 +975,12 @@ def _measure_accuracy(
         "avg_per_trade_pct": round(avg_per_trade, 3),
         "total_return_pct": round(sum(pnl_pcts), 2),
         "unresolved_signals": unresolved,
+        "round_trip_cost_pct": ROUND_TRIP_COST_PCT,
         "honest_note": (
-            "Win rate is measured on this symbol's history with no look-ahead. "
-            "Past performance is not a guarantee. The horizon-15-bar time exit "
-            "is applied uniformly so time-outs become real W/L."
+            "Measured with next-bar-open fills, gap-through stop slippage, "
+            f"and {ROUND_TRIP_COST_PCT}% round-trip costs deducted from every trade "
+            "— all returns are NET. No look-ahead: each bar's signal uses only "
+            "prior bars, and the ML head votes only on bars after its training "
+            "window. Past performance is not a guarantee."
         ),
     }

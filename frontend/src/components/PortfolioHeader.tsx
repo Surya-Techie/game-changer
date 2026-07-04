@@ -38,7 +38,7 @@ export default function PortfolioHeader({ portfolio, onChangeMode, onToggleKillS
           <AnimatedNumber
             value={portfolio?.equity ?? 0}
             format={(v) => fmtMoney(v)}
-            className="text-base font-bold font-mono tabular-nums text-white"
+            className="text-base font-extrabold font-mono tabular-nums text-brand-gradient"
           />
         </StatCard>
 
@@ -56,7 +56,7 @@ export default function PortfolioHeader({ portfolio, onChangeMode, onToggleKillS
               format={(v) => fmtMoney(v, true)}
               className={clsx(
                 "text-base font-bold font-mono tabular-nums",
-                dailyUp ? "text-accent-buy" : "text-accent-sell"
+                dailyUp ? "text-accent-buy value-glow-buy" : "text-accent-sell value-glow-sell"
               )}
             />
           </div>
@@ -76,7 +76,7 @@ export default function PortfolioHeader({ portfolio, onChangeMode, onToggleKillS
               format={(v) => fmtMoney(v, true)}
               className={clsx(
                 "text-base font-bold font-mono tabular-nums",
-                totalUp ? "text-accent-buy" : "text-accent-sell"
+                totalUp ? "text-accent-buy value-glow-buy" : "text-accent-sell value-glow-sell"
               )}
             />
           </div>
@@ -156,7 +156,7 @@ interface StatCardProps {
 function StatCard({ label, tooltip, children }: StatCardProps) {
   return (
     <div
-      className="bg-bg-elevated/30 border border-bg-border/60 hover:border-bg-border/80 hover:bg-bg-elevated/40 px-4 py-2 rounded-xl transition-all duration-200"
+      className="card-aurora shine px-4 py-2 rounded-xl"
       title={tooltip}
     >
       <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-display mb-0.5">

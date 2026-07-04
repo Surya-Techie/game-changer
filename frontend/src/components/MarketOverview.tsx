@@ -3,6 +3,8 @@ import clsx from "clsx";
 import { motion } from "framer-motion";
 import { api } from "../lib/api";
 
+type Source = "live" | "mock" | "mixed";
+
 interface MarketOverview {
   ts: number;
   real: {
@@ -13,9 +15,21 @@ interface MarketOverview {
     symbolsEvaluated: number;
     niftyProxy: number | null;
     niftyProxyChangePct: number | null;
+    niftyIsRealIndex?: boolean;
+  };
+  /** Per-field provenance — drives the LIVE / MOCK badges. */
+  sources?: {
+    indiaVix: Source;
+    bankNifty: Source;
+    sensex: Source;
+    nifty: Source;
+    sectors: Source;
+    pcr: Source;
+    fii: Source;
+    sgxNifty: Source;
   };
   synthetic: {
-    source: "mock";
+    source: string;
     note: string;
     indiaVix: number;
     indiaVixZone: "calm" | "caution" | "fear";
@@ -27,7 +41,7 @@ interface MarketOverview {
     sensexChangePct: number;
     sgxNiftyChangePct: number;
   };
-  sectors: Array<{ name: string; changePct: number }>;
+  sectors: Array<{ name: string; changePct: number; source?: Source }>;
 }
 
 export default function MarketOverviewPanel() {
@@ -42,30 +56,46 @@ export default function MarketOverviewPanel() {
 
   if (!data) return <div className="bg-bg-panel-solid/70 border border-bg-border rounded-xl p-4 text-slate-400 text-sm">Loading market…</div>;
 
+  const src = data.sources;
   const vixTone = data.synthetic.indiaVixZone === "calm" ? "text-accent-buy" : data.synthetic.indiaVixZone === "fear" ? "text-accent-sell" : "text-accent-hold";
   const niftyUp = (data.real.niftyProxyChangePct ?? 0) >= 0;
+  const liveCount = src ? Object.values(src).filter((s) => s === "live").length : 0;
+  const sectorsLive = src?.sectors === "live";
 
   return (
     <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="bg-bg-panel-solid/70 backdrop-blur-glass border border-bg-border rounded-xl p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="text-sm uppercase tracking-wider text-slate-500">Market Overview</div>
-        <div className="text-[10px] text-slate-500" title={data.synthetic.note}>Mock indices · live A/D</div>
+        <div className="text-[10px] text-slate-500" title={data.synthetic.note}>
+          {liveCount > 0 ? `${liveCount + 2} live feeds · PCR/FII demo` : "Mock indices · live A/D"}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-xs">
-        <Cell label="A/D ratio" value={data.real.adRatio.toFixed(2)} sub={`${data.real.advancers}/${data.real.decliners}`} tone={data.real.adRatio >= 1 ? "buy" : "sell"} real />
-        <Cell label="Breadth >20EMA" value={`${data.real.breadthPct.toFixed(0)}%`} sub={`of ${data.real.symbolsEvaluated}`} tone={data.real.breadthPct >= 50 ? "buy" : "sell"} real />
-        <Cell label="Nifty proxy" value={data.real.niftyProxy != null ? data.real.niftyProxy.toFixed(2) : "—"} sub={data.real.niftyProxyChangePct != null ? `${niftyUp ? "+" : ""}${data.real.niftyProxyChangePct.toFixed(2)}%` : ""} tone={niftyUp ? "buy" : "sell"} real />
-        <Cell label="India VIX" value={data.synthetic.indiaVix.toFixed(1)} sub={data.synthetic.indiaVixZone} tone={vixTone === "text-accent-buy" ? "buy" : vixTone === "text-accent-sell" ? "sell" : undefined} mock />
-        <Cell label="PCR" value={data.synthetic.pcr.toFixed(2)} sub={data.synthetic.pcrInterpretation.split(" ")[0]} mock />
-        <Cell label="FII net (₹cr)" value={data.synthetic.fiiNetCr.toFixed(0)} sub={`DII ${data.synthetic.diiNetCr.toFixed(0)}`} tone={data.synthetic.fiiNetCr >= 0 ? "buy" : "sell"} mock />
-        <Cell label="Bank Nifty" value={`${data.synthetic.bankNiftyChangePct >= 0 ? "+" : ""}${data.synthetic.bankNiftyChangePct.toFixed(2)}%`} tone={data.synthetic.bankNiftyChangePct >= 0 ? "buy" : "sell"} mock />
-        <Cell label="Sensex" value={`${data.synthetic.sensexChangePct >= 0 ? "+" : ""}${data.synthetic.sensexChangePct.toFixed(2)}%`} tone={data.synthetic.sensexChangePct >= 0 ? "buy" : "sell"} mock />
-        <Cell label="SGX Nifty" value={`${data.synthetic.sgxNiftyChangePct >= 0 ? "+" : ""}${data.synthetic.sgxNiftyChangePct.toFixed(2)}%`} tone={data.synthetic.sgxNiftyChangePct >= 0 ? "buy" : "sell"} mock />
+        <Cell label="A/D ratio" value={data.real.adRatio.toFixed(2)} sub={`${data.real.advancers}/${data.real.decliners}`} tone={data.real.adRatio >= 1 ? "buy" : "sell"} source="live" />
+        <Cell label="Breadth >20EMA" value={`${data.real.breadthPct.toFixed(0)}%`} sub={`of ${data.real.symbolsEvaluated}`} tone={data.real.breadthPct >= 50 ? "buy" : "sell"} source="live" />
+        <Cell
+          label={data.real.niftyIsRealIndex ? "Nifty 50" : "Nifty proxy"}
+          value={data.real.niftyProxy != null ? data.real.niftyProxy.toFixed(2) : "—"}
+          sub={data.real.niftyProxyChangePct != null ? `${niftyUp ? "+" : ""}${data.real.niftyProxyChangePct.toFixed(2)}%` : ""}
+          tone={niftyUp ? "buy" : "sell"}
+          source={src?.nifty ?? "live"}
+        />
+        <Cell label="India VIX" value={data.synthetic.indiaVix.toFixed(1)} sub={data.synthetic.indiaVixZone} tone={vixTone === "text-accent-buy" ? "buy" : vixTone === "text-accent-sell" ? "sell" : undefined} source={src?.indiaVix ?? "mock"} />
+        <Cell label="PCR" value={data.synthetic.pcr.toFixed(2)} sub={data.synthetic.pcrInterpretation.split(" ")[0]} source="mock" />
+        <Cell label="FII net (₹cr)" value={data.synthetic.fiiNetCr.toFixed(0)} sub={`DII ${data.synthetic.diiNetCr.toFixed(0)}`} tone={data.synthetic.fiiNetCr >= 0 ? "buy" : "sell"} source="mock" />
+        <Cell label="Bank Nifty" value={`${data.synthetic.bankNiftyChangePct >= 0 ? "+" : ""}${data.synthetic.bankNiftyChangePct.toFixed(2)}%`} tone={data.synthetic.bankNiftyChangePct >= 0 ? "buy" : "sell"} source={src?.bankNifty ?? "mock"} />
+        <Cell label="Sensex" value={`${data.synthetic.sensexChangePct >= 0 ? "+" : ""}${data.synthetic.sensexChangePct.toFixed(2)}%`} tone={data.synthetic.sensexChangePct >= 0 ? "buy" : "sell"} source={src?.sensex ?? "mock"} />
+        <Cell label="GIFT Nifty" value={`${data.synthetic.sgxNiftyChangePct >= 0 ? "+" : ""}${data.synthetic.sgxNiftyChangePct.toFixed(2)}%`} tone={data.synthetic.sgxNiftyChangePct >= 0 ? "buy" : "sell"} source="mock" />
       </div>
 
       <div className="mt-3 pt-3 border-t border-bg-border">
-        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Sector performance <span className="text-slate-600">(mock)</span></div>
+        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2 flex items-center gap-1.5">
+          Sector performance
+          {sectorsLive
+            ? <span className="bg-accent-buy/20 text-accent-buy text-[8px] px-1 rounded">LIVE</span>
+            : <span className="text-slate-600">(mixed)</span>}
+        </div>
         <div className="grid grid-cols-7 gap-2">
           {data.sectors.map((s) => {
             const up = s.changePct >= 0;
@@ -74,7 +104,7 @@ export default function MarketOverviewPanel() {
               ? `rgba(22,199,132,${0.1 + intensity * 0.4})`
               : `rgba(234,57,67,${0.1 + intensity * 0.4})`;
             return (
-              <div key={s.name} className="rounded p-2 text-center" style={{ background: bg }}>
+              <div key={s.name} className="rounded p-2 text-center" style={{ background: bg }} title={s.source === "live" ? "Live NSE sector index" : "Demo value"}>
                 <div className="text-[10px] text-slate-300">{s.name}</div>
                 <div className={clsx("text-xs font-mono font-semibold", up ? "text-accent-buy" : "text-accent-sell")}>
                   {up ? "+" : ""}{s.changePct.toFixed(2)}%
@@ -88,14 +118,15 @@ export default function MarketOverviewPanel() {
   );
 }
 
-function Cell({ label, value, sub, tone, real, mock }: { label: string; value: string; sub?: string; tone?: "buy" | "sell"; real?: boolean; mock?: boolean }) {
+function Cell({ label, value, sub, tone, source }: { label: string; value: string; sub?: string; tone?: "buy" | "sell"; source?: Source }) {
   const cls = tone === "buy" ? "text-accent-buy" : tone === "sell" ? "text-accent-sell" : "text-white";
   return (
     <div className="bg-bg-elevated/40 rounded-lg px-2 py-1.5">
       <div className="text-[10px] uppercase tracking-wider text-slate-500 flex items-center gap-1">
         {label}
-        {real && <span className="bg-accent-buy/20 text-accent-buy text-[8px] px-1 rounded">LIVE</span>}
-        {mock && <span className="bg-slate-500/20 text-slate-400 text-[8px] px-1 rounded">MOCK</span>}
+        {source === "live" && <span className="bg-accent-buy/20 text-accent-buy text-[8px] px-1 rounded">LIVE</span>}
+        {source === "mock" && <span className="bg-slate-500/20 text-slate-400 text-[8px] px-1 rounded">MOCK</span>}
+        {source === "mixed" && <span className="bg-amber-500/20 text-amber-400 text-[8px] px-1 rounded">MIX</span>}
       </div>
       <div className={clsx("text-sm font-mono tabular-nums", cls)}>{value}</div>
       {sub && <div className="text-[10px] text-slate-500">{sub}</div>}

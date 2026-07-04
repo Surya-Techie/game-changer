@@ -29,7 +29,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="relative min-h-screen flex items-center justify-center px-4 bg-app-radial overflow-hidden select-none">
+    <div className="relative min-h-full flex items-center justify-center px-4 bg-app-radial overflow-hidden select-none">
       {/* Dynamic Background Mesh Blobs */}
       <div className="absolute top-1/4 left-1/4 w-[350px] h-[350px] rounded-full bg-accent-info/8 blur-[100px] animate-float-slow pointer-events-none" />
       <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] rounded-full bg-accent-buy/5 blur-[120px] animate-float-slow pointer-events-none [animation-delay:3s]" />

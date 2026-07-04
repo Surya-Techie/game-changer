@@ -120,21 +120,24 @@ class AutoTrader {
       await positionManager.closePosition(String(existing._id), "FLIP");
     }
 
-    // Respect user's stop mode: override AI's stop/target if FIXED_PCT.
+    // The signal's stop/target carry the *accuracy profile* geometry
+    // (tight target — optimised for measured hit rate, before costs).
+    // Actual trades must cover brokerage + slippage, so the trade target
+    // is always re-derived from the account's own risk settings:
+    //   FIXED_PCT — stop at stopPct of entry, target at targetRR × stop.
+    //   ATR       — keep the AI's ATR-based stop distance, but set the
+    //               target at the account's targetRR × that distance.
+    const entry = sig.suggestedEntry;
     let stop = sig.suggestedStop;
-    let target = sig.suggestedTarget;
+    let stopDist = Math.abs(entry - stop);
     if (state.stopMode === "FIXED_PCT" && state.stopPct > 0) {
-      const entry = sig.suggestedEntry;
-      const stopDist = entry * (state.stopPct / 100);
-      const targetDist = stopDist * state.targetRR;
-      if (desiredSide === "LONG") {
-        stop = Math.round((entry - stopDist) * 100) / 100;
-        target = Math.round((entry + targetDist) * 100) / 100;
-      } else {
-        stop = Math.round((entry + stopDist) * 100) / 100;
-        target = Math.round((entry - targetDist) * 100) / 100;
-      }
+      stopDist = entry * (state.stopPct / 100);
+      stop = desiredSide === "LONG" ? entry - stopDist : entry + stopDist;
     }
+    const targetDist = stopDist * (state.targetRR > 0 ? state.targetRR : 2.0);
+    let target = desiredSide === "LONG" ? entry + targetDist : entry - targetDist;
+    stop = Math.round(stop * 100) / 100;
+    target = Math.round(target * 100) / 100;
 
     const risk = await evaluateNewPosition({
       userId,

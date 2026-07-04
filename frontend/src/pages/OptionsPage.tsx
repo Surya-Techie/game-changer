@@ -3,11 +3,17 @@ import clsx from "clsx";
 import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
 import { optionsApi, type OptionsChain, type StrikeRow, type StrikeSide } from "../lib/optionsApi";
+import { SymbolPicker } from "../components/SymbolSearchInput";
 
 const UNIVERSE = [
   "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "AXISBANK", "ITC", "LT", "BHARTIARTL",
   "MARUTI", "KOTAKBANK", "BAJFINANCE", "HCLTECH", "WIPRO", "ASIANPAINT", "NESTLEIND", "TITAN", "ADANIENT", "SUNPHARMA",
 ];
+
+
+/** Null/NaN-safe number formatter — options data from NSE is often partial. */
+const fmt = (v: number | null | undefined, d = 2, prefix = "", suffix = ""): string =>
+  v != null && isFinite(v) ? `${prefix}${v.toFixed(d)}${suffix}` : "—";
 
 export default function OptionsPage() {
   const [symbol, setSymbol] = useState<string>("RELIANCE");
@@ -69,25 +75,17 @@ export default function OptionsPage() {
   }, [expiry]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-app-radial text-slate-200">
+    <div className="min-h-full flex flex-col bg-app-radial text-slate-200">
       <Topbar symbol={symbol} wsStatus="open" />
       <div className="flex-1 flex">
         <Sidebar symbols={[]} prices={{}} prevPrices={{}} active="" onSelect={() => {}} />
         <main className="flex-1 p-4 space-y-3 min-w-0">
           {/* Header row */}
           <div className="bg-bg-panel-solid/60 border border-bg-border rounded-xl p-3 flex flex-wrap items-center gap-3">
-            <select
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value)}
-              className="bg-bg-elevated border border-bg-border rounded-md px-2 py-1 text-sm text-white font-mono"
-            >
-              {UNIVERSE.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
+            <SymbolPicker value={symbol} onSelect={setSymbol} className="w-[240px]" placeholder="Search any stock…" />
             <div className="text-sm font-mono">
               <span className="text-slate-500 text-xs uppercase mr-1">Underlying</span>
-              <span className="text-white">₹{chain?.underlying.toFixed(2) ?? "—"}</span>
+              <span className="text-white">{fmt(chain?.underlying, 2, "₹")}</span>
             </div>
             {chain?.expiries.length ? (
               <div className="flex gap-1">
@@ -120,9 +118,9 @@ export default function OptionsPage() {
             <>
               {/* PCR + Max Pain + IV summary */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <SummaryCard label="Put / Call Ratio (OI)" value={expiry.pcr.toFixed(2)}
+                <SummaryCard label="Put / Call Ratio (OI)" value={fmt(expiry.pcr)}
                   hint={expiry.pcr > 1 ? "Put-heavy → bearish bias" : "Call-heavy → bullish bias"} />
-                <SummaryCard label="Max Pain" value={expiry.max_pain ? `₹${expiry.max_pain.toFixed(0)}` : "—"}
+                <SummaryCard label="Max Pain" value={fmt(expiry.max_pain, 0, "₹")}
                   hint="Strike where option writers lose least at expiry" />
                 <SummaryCard label="Avg IV" value={expiry.iv_avg != null ? `${(expiry.iv_avg * 100).toFixed(1)}%` : "—"} />
                 <SummaryCard label="Unusual OI strikes"
@@ -181,12 +179,12 @@ function MiniPriceScale({ chain, expiry }: { chain: OptionsChain; expiry: { rows
         {expiry.max_pain != null && (
           <div className="absolute top-0 bottom-0 w-px bg-amber-400" style={{ left: `${pos(expiry.max_pain)}%` }} title="Max pain" />
         )}
-        <div className="absolute -top-4 left-0 text-[10px] text-slate-500 font-mono">₹{lo.toFixed(0)}</div>
-        <div className="absolute -top-4 right-0 text-[10px] text-slate-500 font-mono">₹{hi.toFixed(0)}</div>
+        <div className="absolute -top-4 left-0 text-[10px] text-slate-500 font-mono">{fmt(lo, 0, "₹")}</div>
+        <div className="absolute -top-4 right-0 text-[10px] text-slate-500 font-mono">{fmt(hi, 0, "₹")}</div>
       </div>
       <div className="flex gap-3 text-[10px] mt-1">
-        <span className="flex items-center gap-1"><span className="w-2 h-2 bg-emerald-400 inline-block" /> Underlying ₹{chain.underlying.toFixed(2)}</span>
-        {expiry.max_pain != null && <span className="flex items-center gap-1"><span className="w-2 h-2 bg-amber-400 inline-block" /> Max pain ₹{expiry.max_pain.toFixed(0)}</span>}
+        <span className="flex items-center gap-1"><span className="w-2 h-2 bg-emerald-400 inline-block" /> Underlying {fmt(chain.underlying, 2, "₹")}</span>
+        {expiry.max_pain != null && <span className="flex items-center gap-1"><span className="w-2 h-2 bg-amber-400 inline-block" /> Max pain {fmt(expiry.max_pain, 0, "₹")}</span>}
       </div>
     </div>
   );
@@ -237,7 +235,7 @@ function ChainTable({
                   itm={ceItm}
                 />
                 <td className={clsx("px-2 py-1.5 text-center font-semibold", ceItm ? "text-emerald-300" : peItm ? "text-rose-300" : "text-white")}>
-                  {r.strike.toFixed(0)}
+                  {fmt(r.strike, 0)}
                 </td>
                 <SideCell side={r.pe} maxOi={maxOi} kind="PE" unusual={unusual.has(r.strike)}
                   selected={selected?.strike === r.strike && selected?.kind === "PE"}
@@ -295,17 +293,17 @@ function SideCell({
           <span className="relative">{Math.round(side.oi).toLocaleString("en-IN")}</span>
           {unusual && <span className="ml-1 text-[9px] text-amber-300">⚡</span>}
         </td>
-        <td onClick={onClick} className={clsx("px-2 py-1.5 text-right cursor-pointer", selected && "ring-1 ring-accent-info ring-inset")}>{side.ltp.toFixed(2)}</td>
-        <td onClick={onClick} className={clsx("px-2 py-1.5 text-right text-slate-400 cursor-pointer")}>{(side.iv * 100).toFixed(1)}%</td>
-        <td onClick={onClick} className={clsx("px-2 py-1.5 text-right text-slate-400 cursor-pointer")}>{side.delta.toFixed(2)}</td>
+        <td onClick={onClick} className={clsx("px-2 py-1.5 text-right cursor-pointer", selected && "ring-1 ring-accent-info ring-inset")}>{fmt(side.ltp)}</td>
+        <td onClick={onClick} className={clsx("px-2 py-1.5 text-right text-slate-400 cursor-pointer")}>{fmt(side.iv != null ? side.iv * 100 : null, 1, "", "%")}</td>
+        <td onClick={onClick} className={clsx("px-2 py-1.5 text-right text-slate-400 cursor-pointer")}>{fmt(side.delta)}</td>
       </>
     );
   }
   return (
     <>
-      <td onClick={onClick} className={clsx("px-2 py-1.5 text-slate-400 cursor-pointer")}>{side.delta.toFixed(2)}</td>
-      <td onClick={onClick} className={clsx("px-2 py-1.5 text-slate-400 cursor-pointer")}>{(side.iv * 100).toFixed(1)}%</td>
-      <td onClick={onClick} className={clsx("px-2 py-1.5 cursor-pointer")}>{side.ltp.toFixed(2)}</td>
+      <td onClick={onClick} className={clsx("px-2 py-1.5 text-slate-400 cursor-pointer")}>{fmt(side.delta)}</td>
+      <td onClick={onClick} className={clsx("px-2 py-1.5 text-slate-400 cursor-pointer")}>{fmt(side.iv != null ? side.iv * 100 : null, 1, "", "%")}</td>
+      <td onClick={onClick} className={clsx("px-2 py-1.5 cursor-pointer")}>{fmt(side.ltp)}</td>
       <td onClick={onClick} className={clsx("px-2 py-1.5 text-right cursor-pointer relative", selected && "ring-1 ring-accent-info ring-inset", itm && "bg-rose-500/5")}>
         <div className="absolute left-0 top-0 bottom-0" style={{ width: `${oiRatio * 100}%`, background: bgColor }} />
         <span className="relative">{Math.round(side.oi).toLocaleString("en-IN")}</span>
@@ -344,7 +342,7 @@ function GreeksPanel({
     <div className="bg-bg-panel-solid/60 border border-bg-border rounded-xl p-3 space-y-2">
       <div className="flex items-center justify-between">
         <div className="text-sm text-white font-semibold">
-          {selected.kind === "CE" ? "Call" : "Put"} ₹{selected.strike.toFixed(0)}
+          {selected.kind === "CE" ? "Call" : "Put"} {fmt(selected.strike, 0, "₹")}
         </div>
         <div className="text-[10px] text-slate-500">{expiry}</div>
       </div>
@@ -353,14 +351,14 @@ function GreeksPanel({
       {data && (
         <>
           <div className="grid grid-cols-2 gap-2 text-xs font-mono">
-            <Stat label="LTP" value={`₹${data.price.toFixed(2)}`} />
-            <Stat label="IV" value={data.iv != null ? `${(data.iv * 100).toFixed(1)}%` : "—"} />
-            <Stat label="Delta" value={data.greeks.delta.toFixed(4)} />
-            <Stat label="Gamma" value={data.greeks.gamma.toFixed(6)} />
-            <Stat label="Theta/day" value={data.greeks.theta.toFixed(2)} />
-            <Stat label="Vega/1%" value={data.greeks.vega.toFixed(2)} />
-            <Stat label="Rho/1%" value={data.greeks.rho.toFixed(2)} />
-            <Stat label="Underlying" value={`₹${data.underlying.toFixed(2)}`} />
+            <Stat label="LTP" value={fmt(data.price, 2, "₹")} />
+            <Stat label="IV" value={fmt(data.iv != null ? data.iv * 100 : null, 1, "", "%")} />
+            <Stat label="Delta" value={fmt(data.greeks?.delta, 4)} />
+            <Stat label="Gamma" value={fmt(data.greeks?.gamma, 6)} />
+            <Stat label="Theta/day" value={fmt(data.greeks?.theta)} />
+            <Stat label="Vega/1%" value={fmt(data.greeks?.vega)} />
+            <Stat label="Rho/1%" value={fmt(data.greeks?.rho)} />
+            <Stat label="Underlying" value={fmt(data.underlying, 2, "₹")} />
           </div>
           {data.iv_percentile != null && (
             <div className="text-xs pt-2 border-t border-bg-border">

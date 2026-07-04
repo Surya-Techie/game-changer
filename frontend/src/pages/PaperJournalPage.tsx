@@ -29,7 +29,7 @@ export default function PaperJournalPage() {
   const selected = useMemo(() => trades.find((t) => t._id === selectedId) ?? null, [trades, selectedId]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-app-radial text-slate-200">
+    <div className="min-h-full flex flex-col bg-app-radial text-slate-200">
       <PaperBanner />
       <Topbar symbol="Journal" wsStatus="open" />
       <div className="flex-1 flex">

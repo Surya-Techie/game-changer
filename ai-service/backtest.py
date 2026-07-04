@@ -32,6 +32,10 @@ class BacktestRequest:
     brokerage_flat: float = 0.0       # e.g. ₹40 (₹20 each side)
     brokerage_pct: float = 0.0        # e.g. 0.0003 = 0.03% per side, charged round-trip
     periods_per_year: int = 94500     # ~1m bars in an NSE year
+    # Max candles handed to evaluate() per decision. The live signal engine
+    # sends the most recent 500 candles, so 500 both matches production and
+    # keeps long backtests O(n) instead of O(n²). None = full history.
+    eval_window: Optional[int] = 500
 
 
 @dataclass
@@ -285,7 +289,8 @@ def run_backtest(req: BacktestRequest, symbol: str = "TEST") -> dict:
         # of the same bar — that injected up to 1 bar of forward-looking
         # information and inflated paper-profit results.
         if open_pos is None:
-            decision = evaluate(candles[:i], req.strategy_cfg)
+            win_start = max(0, i - req.eval_window) if req.eval_window else 0
+            decision = evaluate(candles[win_start:i], req.strategy_cfg)
             if (
                 decision.action in ("BUY", "SELL")
                 and decision.confidence >= req.min_confidence

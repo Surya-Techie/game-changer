@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/admin.js";
-import { getCandles } from "../services/candleAggregator.js";
+import { getCandlesSmart } from "../services/candleAggregator.js";
 import { mockFeed } from "../services/mockFeed.js";
 import { getMlRegistry, trainMl } from "../services/aiClient.js";
 import { logger } from "../utils/logger.js";
@@ -21,7 +21,7 @@ router.get("/registry", async (_req, res, next) => {
 router.post("/train/:symbol", requireAdmin, async (req, res, next) => {
   try {
     const symbol = req.params.symbol.toUpperCase();
-    const candles = getCandles(symbol, 1000);
+    const candles = await getCandlesSmart(symbol, 1000);
     if (candles.length < 100) {
       return res.status(400).json({ error: "not enough candles to train (need ≥ 100)", have: candles.length });
     }
@@ -39,7 +39,7 @@ router.post("/train-all", requireAdmin, async (_req, res, next) => {
     const symbols = mockFeed.symbols();
     const results: Array<{ symbol: string; ok: boolean; metrics?: unknown; error?: string }> = [];
     for (const symbol of symbols) {
-      const candles = getCandles(symbol, 1000);
+      const candles = await getCandlesSmart(symbol, 1000);
       if (candles.length < 100) {
         results.push({ symbol, ok: false, error: `only ${candles.length} candles` });
         continue;

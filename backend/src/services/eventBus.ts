@@ -16,6 +16,9 @@ export interface SignalEvent {
   suggestedStop?: number;
   suggestedTarget?: number;
   reason?: string;
+  // Provenance of the prices behind this signal: real NSE ticks or the
+  // dev synthetic walk. Lets consumers (UI, accuracy stats) separate them.
+  dataSource?: "live" | "synthetic";
   // Phase 11 — Layer 6 pattern confirmation snapshot (best agreeing or
   // conflicting pattern at signal time). null when no high-confidence pattern fired.
   pattern_confirmation?: {

@@ -244,7 +244,114 @@ def _ticker_underlying_price(t: Any) -> Optional[float]:
     return None
 
 
+# NSE direct chain — the ONLY real source for Indian option chains
+# (Yahoo carries no options for .NS listings, so the yfinance path below
+# only ever works for non-Indian symbols).
+try:
+    from nse_live import fetch_option_chain_raw as _nse_chain_raw
+    _NSE_OK = True
+except Exception:  # pragma: no cover
+    _NSE_OK = False
+    _nse_chain_raw = None  # type: ignore[assignment]
+
+
+def _parse_nse_expiry(s: str) -> Optional[str]:
+    """NSE '31-Jul-2026' → ISO 'YYYY-MM-DD' (what the response contract uses)."""
+    try:
+        return datetime.strptime(s, "%d-%b-%Y").date().isoformat()
+    except (ValueError, TypeError):
+        return None
+
+
+def _nse_leg(rowside: Optional[Dict[str, Any]], spot: float, K: float, T: float,
+             kind: Literal["CE", "PE"], iv_samples: List[float]) -> Optional[Dict[str, Any]]:
+    """One CE/PE cell from an NSE chain row → the StrikeRow leg dict."""
+    if not rowside:
+        return None
+    ltp = float(rowside.get("lastPrice") or 0.0)
+    bid = float(rowside.get("bidprice") or 0.0)
+    ask = float(rowside.get("askPrice") or 0.0)
+    oi = float(rowside.get("openInterest") or 0.0)
+    vol = float(rowside.get("totalTradedVolume") or 0.0)
+    iv = float(rowside.get("impliedVolatility") or 0.0) / 100.0  # NSE reports %
+    mid = (bid + ask) / 2.0 if (bid > 0 and ask > 0) else ltp
+    if iv <= 0 and mid > 0:
+        iv = implied_vol(spot, K, T, RISK_FREE_RATE_INR, mid, kind) or 0.0
+    if iv > 0:
+        iv_samples.append(iv)
+    g = bs_greeks(spot, K, T, RISK_FREE_RATE_INR, max(iv, 1e-4), kind)
+    return {"ltp": ltp, "bid": bid, "ask": ask, "oi": oi, "volume": vol, "iv": iv, **g}
+
+
+def build_chain_nse(symbol: str, expiries_wanted: int = 3) -> Optional[OptionsChainResponse]:
+    """Assemble the chain from NSE's own option-chain API. None on failure."""
+    if not _NSE_OK or _nse_chain_raw is None:
+        return None
+    raw = _nse_chain_raw(symbol, expiries_wanted)
+    if not raw:
+        return None
+    records = raw.get("records") or {}
+    all_rows = records.get("data") or []
+    spot = float(records.get("underlyingValue") or 0.0)
+    if spot <= 0 or not all_rows:
+        return None
+    now = datetime.now(timezone.utc)
+    expiry_raws = [e for e in (records.get("expiryDates") or []) if _parse_nse_expiry(e)]
+    expiries_out: List[ChainExpiry] = []
+    for exp_raw in expiry_raws[:expiries_wanted]:
+        exp_iso = _parse_nse_expiry(exp_raw) or ""
+        dte = _days_between(exp_iso, now)
+        T = max(dte, 1) / 365.0
+        rows_for_exp = [r for r in all_rows if r.get("expiryDate") == exp_raw]
+        if not rows_for_exp:
+            continue
+        strikes = sorted({float(r.get("strikePrice") or 0.0) for r in rows_for_exp if r.get("strikePrice")})
+        by_k = {float(r.get("strikePrice") or 0.0): r for r in rows_for_exp}
+        rows: List[StrikeRow] = []
+        iv_samples: List[float] = []
+        ce_oi_map: Dict[float, float] = {}
+        pe_oi_map: Dict[float, float] = {}
+        ce_oi_total = 0.0
+        pe_oi_total = 0.0
+        for K in strikes:
+            r = by_k.get(K) or {}
+            ce_dict = _nse_leg(r.get("CE"), spot, K, T, "CE", iv_samples)
+            pe_dict = _nse_leg(r.get("PE"), spot, K, T, "PE", iv_samples)
+            if ce_dict:
+                ce_oi_map[K] = ce_dict["oi"]
+                ce_oi_total += ce_dict["oi"]
+            if pe_dict:
+                pe_oi_map[K] = pe_dict["oi"]
+                pe_oi_total += pe_dict["oi"]
+            rows.append(StrikeRow(strike=K, ce=ce_dict, pe=pe_dict))
+        pcr = (pe_oi_total / ce_oi_total) if ce_oi_total > 0 else 0.0
+        mp = _max_pain(strikes, ce_oi_map, pe_oi_map)
+        unusual = sorted(set(_unusual_oi(strikes, ce_oi_map) + _unusual_oi(strikes, pe_oi_map)))
+        iv_avg = float(np.mean(iv_samples)) if iv_samples else None
+        expiries_out.append(ChainExpiry(
+            expiry=exp_iso,
+            days_to_expiry=dte,
+            rows=rows,
+            pcr=round(pcr, 3),
+            max_pain=mp,
+            iv_avg=round(iv_avg, 4) if iv_avg is not None else None,
+            unusual_oi_strikes=unusual,
+        ))
+    if not expiries_out:
+        return None
+    return OptionsChainResponse(
+        symbol=symbol.upper(),
+        underlying=spot,
+        fetched_at=int(_time.time() * 1000),
+        expiries=expiries_out,
+    )
+
+
 def build_chain(symbol: str, expiries_wanted: int = 3) -> OptionsChainResponse:
+    # NSE first — the only source with real Indian option chains.
+    nse = build_chain_nse(symbol, expiries_wanted)
+    if nse is not None and nse.expiries:
+        return nse
     if not _YF_OK:
         raise HTTPException(status_code=503, detail="yfinance not installed")
     sym = symbol.upper()

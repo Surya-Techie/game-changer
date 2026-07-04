@@ -177,7 +177,7 @@ def _yfinance_price(symbol: str) -> Optional[float]:
 
 
 try:
-    from nse_live import fetch_nse_ltp, fetch_nse_batch
+    from nse_live import fetch_nse_ltp, fetch_nse_batch, fetch_history
     _NSE_OK = True
 except Exception:
     _NSE_OK = False
@@ -208,6 +208,25 @@ def nse_live_batch(symbols: str = ""):
     if not syms:
         return {"available": True, "quotes": {}}
     return {"available": True, "quotes": fetch_nse_batch(syms)}
+
+
+@app.get("/history/{symbol}")
+def history(symbol: str, interval: str = "1m", period: str = "5d"):
+    """Real historical OHLCV candles (yfinance). Ascending epoch-ms bars.
+
+    The backend calls this at startup to seed its in-memory candle store
+    with REAL bars so signals are never computed on fabricated history.
+    """
+    if not _NSE_OK:
+        return {"symbol": symbol.upper(), "available": False, "candles": []}
+    candles = fetch_history(symbol, interval=interval, period=period)
+    return {
+        "symbol": symbol.upper(),
+        "interval": interval,
+        "period": period,
+        "available": len(candles) > 0,
+        "candles": candles,
+    }
 
 
 @app.get("/price/{symbol}")
@@ -258,12 +277,15 @@ class Candle(BaseModel):
 
 
 class StrategyToggles(BaseModel):
-    regimeFilter: bool = False
-    regimeMinAdx: float = 18.0
-    mtfConfirmation: bool = False
-    stopMode: Literal["ATR", "FIXED_PCT"] = "ATR"
-    stopPct: float = 2.0
-    targetRR: float = 2.0
+    # Every field is optional: only explicitly-sent values override the
+    # StrategyConfig defaults. A partial toggle payload (e.g. just the
+    # regime filter) must NOT silently reset exit geometry to old values.
+    regimeFilter: Optional[bool] = None
+    regimeMinAdx: Optional[float] = None
+    mtfConfirmation: Optional[bool] = None
+    stopMode: Optional[Literal["ATR", "FIXED_PCT"]] = None
+    stopPct: Optional[float] = None
+    targetRR: Optional[float] = None
 
 
 class SignalRequest(BaseModel):
@@ -284,16 +306,22 @@ class SignalResponse(BaseModel):
 
 
 def _cfg_from(t: Optional[StrategyToggles]) -> StrategyConfig:
+    cfg = StrategyConfig()
     if not t:
-        return StrategyConfig()
-    return StrategyConfig(
-        regime_filter=t.regimeFilter,
-        regime_min_adx=t.regimeMinAdx,
-        mtf_confirmation=t.mtfConfirmation,
-        stop_mode=t.stopMode,
-        stop_pct=t.stopPct,
-        target_rr=t.targetRR,
-    )
+        return cfg
+    if t.regimeFilter is not None:
+        cfg.regime_filter = t.regimeFilter
+    if t.regimeMinAdx is not None:
+        cfg.regime_min_adx = t.regimeMinAdx
+    if t.mtfConfirmation is not None:
+        cfg.mtf_confirmation = t.mtfConfirmation
+    if t.stopMode is not None:
+        cfg.stop_mode = t.stopMode
+    if t.stopPct is not None:
+        cfg.stop_pct = t.stopPct
+    if t.targetRR is not None:
+        cfg.target_rr = t.targetRR
+    return cfg
 
 
 @app.get("/health")
@@ -606,7 +634,9 @@ try:
     class PowerAnalysisRequest(BaseModel):
         symbol: str
         candles: List[Candle] = Field(..., min_length=80)
-        mode: Literal["strict", "loose"] = "strict"
+        # Single POWER decision rule. "strict"/"loose" are accepted for
+        # backward compatibility but map to the same rule now.
+        mode: Literal["power", "strict", "loose"] = "power"
         use_ml: bool = False
         # Target multiple of risk. 2.0 maximises win rate, 4.0 targets
         # ~4 % returns per winning trade. Anything outside [1.0, 6.0]

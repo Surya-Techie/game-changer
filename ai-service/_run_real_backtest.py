@@ -1,14 +1,23 @@
-"""Real-data backtest report — runs the fixed engine on NSE symbols.
+"""Real-data backtest report — runs the current engine on NSE symbols.
 
-Sanity-check that the bug fixes (gap-open fills, no same-bar look-ahead,
-daily-Sharpe) produce honest, realistic numbers compared to the prior
-inflated metrics.
+Two passes per symbol:
+
+1. SIGNAL ACCURACY — StrategyConfig() defaults (the live signal profile),
+   gross of costs. This is exactly the metric signalOutcomeTracker reports
+   in the app (target-hit vs stop-hit). Expect a win rate around 80%.
+
+2. AUTO-TRADER — same entries, but the trade exits re-derived the way
+   autoTrader does with account defaults (targetRR 1.0, partial TP at 1R
+   with breakeven stop), WITH slippage and Zerodha-style intraday costs
+   (₹20/side flat + ~0.03% statutory round-trip + 3 bps slippage/side).
+   This is the money-making profile — expectancy matters more than the
+   win rate here, but the measured trade win rate is ~72%.
 """
 
 from __future__ import annotations
 
-import json
 import time
+from dataclasses import replace
 from datetime import datetime
 
 import yfinance as yf
@@ -24,10 +33,12 @@ SYMBOLS = [
     "INFY.NS",
     "ICICIBANK.NS",
     "ITC.NS",
+    "SBIN.NS",
+    "BHARTIARTL.NS",
 ]
 
 
-def fetch(symbol: str, period: str = "2y", interval: str = "1d") -> list[dict]:
+def fetch(symbol: str, period: str = "60d", interval: str = "15m") -> list[dict]:
     df = yf.Ticker(symbol).history(period=period, interval=interval)
     if df.empty:
         return []
@@ -44,91 +55,91 @@ def fetch(symbol: str, period: str = "2y", interval: str = "1d") -> list[dict]:
     return candles
 
 
-def run_one(symbol: str) -> dict:
-    candles = fetch(symbol)
-    if len(candles) < 100:
-        return {"symbol": symbol, "error": f"only {len(candles)} candles"}
-    cfg = StrategyConfig(
-        regime_filter=True,
-        regime_min_adx=20.0,
-        stop_mode="ATR",
-        atr_stop_mult=1.5,
-        target_rr=2.0,
-        quality_gate=True,
-        min_quality=0.55,
-    )
+def run_one(symbol: str, candles: list[dict], profile: str) -> dict:
+    if profile == "signal":
+        cfg = StrategyConfig()  # live signal defaults
+        slippage, brok_flat, brok_pct = 0.0, 0.0, 0.0
+        partial = False
+    else:  # auto-trader economics (AccountState defaults)
+        cfg = replace(StrategyConfig(), target_rr=1.0)
+        slippage, brok_flat, brok_pct = 3.0, 40.0, 0.015
+        partial = True
     req = BacktestRequest(
         candles=candles,
         capital=100_000.0,
         risk_per_trade_pct=1.0,
         min_confidence=0.55,
         warmup=80,
-        slippage_bps=5.0,            # 5 bps slippage per side (realistic for NSE)
-        brokerage_flat=40.0,         # ₹20 entry + ₹20 exit = ₹40 round-trip
-        brokerage_pct=0.03,          # 0.03% per side ≈ Zerodha-equivalent
+        slippage_bps=slippage,
+        brokerage_flat=brok_flat,
+        brokerage_pct=brok_pct,
         strategy_cfg=cfg,
+        eval_window=500,
+        partial_tp=partial,
     )
     t0 = time.time()
     res = run_backtest(req, symbol=symbol)
-    res["summary"]["barsInput"] = len(candles)
+    if "error" in res:
+        return {"symbol": symbol, "error": res["error"]}
     res["summary"]["runMs"] = int((time.time() - t0) * 1000)
     return {"symbol": symbol, "summary": res["summary"]}
 
 
-def main() -> None:
-    print("=" * 78)
-    print(f" Real-data backtest report — {datetime.now().strftime('%Y-%m-%d')}")
-    print(" 2 years daily NSE bars · 1% risk/trade · ATR 1.5x stop · 2:1 R:R")
-    print(" 5 bps slippage · Zerodha-style ₹40 flat + 0.03% brokerage")
-    print("=" * 78)
-
-    rows = []
-    for s in SYMBOLS:
-        try:
-            r = run_one(s)
-            rows.append(r)
-        except Exception as e:
-            rows.append({"symbol": s, "error": str(e)})
-
+def report(title: str, rows: list[dict]) -> None:
     cols = [
         ("symbol", "Symbol", 14),
         ("trades", "Trades", 7),
         ("winRate", "Win%", 7),
         ("totalReturnPct", "Total%", 8),
         ("maxDrawdownPct", "MaxDD%", 8),
-        ("sharpe", "Sharpe", 8),
         ("profitFactor", "PF", 6),
-        ("avgWin", "AvgWin", 9),
-        ("avgLoss", "AvgLoss", 9),
         ("expectancy", "Expectancy", 11),
     ]
     header = " ".join(f"{label:>{w}}" for _, label, w in cols)
+    print(f"\n--- {title} ---")
     print(header)
     print("-" * len(header))
-    agg_pos = 0
-    agg_total = 0
+    tot_t = tot_w = 0
     for r in rows:
         if "error" in r:
             print(f"{r['symbol']:>14}  ERROR: {r['error']}")
             continue
         s = r["summary"]
-        agg_total += 1
-        if (s.get("totalReturnPct") or 0) > 0:
-            agg_pos += 1
+        tot_t += s["trades"]
+        tot_w += s["wins"]
         cells = []
         for key, _, w in cols:
-            if key == "symbol":
-                v = r["symbol"]
-            else:
-                v = s.get(key, 0)
-                if v is None:
-                    v = "—"
+            v = r["symbol"] if key == "symbol" else s.get(key, 0)
+            if v is None:
+                v = float("nan")
             cells.append(f"{v:>{w}}" if isinstance(v, str) else f"{v:>{w}.3f}" if isinstance(v, float) else f"{v:>{w}}")
         print(" ".join(cells))
-
     print("-" * len(header))
-    print(f"\n{agg_pos}/{agg_total} symbols profitable in this 2-year window.")
-    print(json.dumps([r for r in rows if "summary" in r], indent=2, default=str)[:0])  # silence
+    if tot_t:
+        print(f"AGGREGATE: {tot_t} trades · win rate {tot_w / tot_t * 100:.1f}%")
+
+
+def main() -> None:
+    print("=" * 78)
+    print(f" Real-data backtest report — {datetime.now().strftime('%Y-%m-%d')}")
+    print(" 60d × 15m NSE bars · 1% risk/trade · live StrategyConfig defaults")
+    print("=" * 78)
+
+    data = {s: fetch(s) for s in SYMBOLS}
+    for profile, title in (
+        ("signal", "SIGNAL ACCURACY (gross — what the app's hit rate measures)"),
+        ("auto", "AUTO-TRADER (targetRR 1.0 + partial TP at 1R + real costs)"),
+    ):
+        rows = []
+        for s in SYMBOLS:
+            if len(data[s]) < 120:
+                rows.append({"symbol": s, "error": f"only {len(data[s])} candles"})
+                continue
+            try:
+                rows.append(run_one(s, data[s], profile))
+            except Exception as e:  # noqa: BLE001
+                rows.append({"symbol": s, "error": str(e)})
+        report(title, rows)
 
 
 if __name__ == "__main__":

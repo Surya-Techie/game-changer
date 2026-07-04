@@ -275,6 +275,11 @@ class TrainedModel:
     # Median target-scaler from training (used to de-scale predictions
     # back to a nominal % return when the live vol scaler isn't available).
     median_vol_scaler: float = 0.01
+    # Timestamp (ms) of the LAST candle in the training data. Historical
+    # scans must not let the model vote on bars at or before this — those
+    # bars are in the model's own training window (in-sample). 0 = unknown
+    # (legacy pickle) → treat every historical bar as in-sample.
+    train_data_end_t: int = 0
 
     def to_metrics_dict(self) -> dict:
         return {
@@ -315,6 +320,7 @@ def _persist(model: TrainedModel) -> None:
         "scaler": model.scaler,
         "clf_calibrated": model.clf_calibrated,
         "median_vol_scaler": model.median_vol_scaler,
+        "train_data_end_t": model.train_data_end_t,
         "metrics": model.to_metrics_dict(),
     }
     joblib.dump(payload, path)
@@ -361,6 +367,7 @@ def _load(symbol: str) -> Optional[TrainedModel]:
             scaler=payload.get("scaler"),
             clf_calibrated=payload.get("clf_calibrated"),
             median_vol_scaler=payload.get("median_vol_scaler", 0.01),
+            train_data_end_t=int(payload.get("train_data_end_t", 0) or 0),
         )
         _LIVE_MODELS[symbol] = m
         return m
@@ -566,6 +573,7 @@ def train_symbol(symbol: str, candles: List[dict], horizon: int = 5) -> dict:
         rf=rf, gbm=gbm, mlp=mlp, scaler=scaler,
         clf_calibrated=clf_calibrated,
         median_vol_scaler=max(median_vs, 1e-6),
+        train_data_end_t=int(candles[-1]["t"]) if candles else 0,
     )
     _LIVE_MODELS[symbol] = model
     _persist(model)
@@ -693,6 +701,89 @@ def predict_with_trained(symbol: str, candles: List[dict]) -> dict:
             "featureImportance": {k: round(v, 4) for k, v in sorted(model.feature_importance.items(), key=lambda x: -x[1])[:8]},
         },
     }
+
+
+def predict_series_with_trained(symbol: str, candles: List[dict]) -> Dict[int, dict]:
+    """Per-bar predictions for a historical scan, computed in one pass.
+
+    Returns {bar_index: prediction} where each prediction carries the
+    fields the power-analysis voter reads (ready / direction / confidence
+    / model.brierScore / model.directionAccuracyPct).
+
+    Matches predict_with_trained(symbol, candles[:i+1]) for every i: the
+    prefix's last feature row is the one built at candle i - horizon
+    (build_features drops the final `horizon` bars because targets need
+    future data), and every feature only looks backward — so row values
+    are identical whether built on the prefix or the full series. The
+    difference is cost: one build_features + batched model calls instead
+    of one full rebuild per bar (O(n) vs O(n²)).
+    """
+    model = _load(symbol)
+    if model is None:
+        return {}
+    X, _y, _t, vol_scalers = build_features(candles)
+    if X.shape[0] == 0 or X.shape[1] != model.n_features:
+        return {}
+    horizon = 5  # build_features' fixed target horizon
+    try:
+        x_scaled = model.scaler.transform(X)
+        rf_raw = np.clip(model.rf.predict(X), -5.0, 5.0)
+        gbm_raw = np.clip(model.gbm.predict(X), -5.0, 5.0)
+        mlp_raw = np.clip(model.mlp.predict(x_scaled), -5.0, 5.0)
+    except Exception:
+        return {}
+    proba_all: Optional[np.ndarray] = None
+    if model.clf_calibrated is not None:
+        try:
+            proba_all = np.clip(model.clf_calibrated.predict_proba(X)[:, 1], 0.02, 0.98)
+        except Exception:
+            proba_all = None
+
+    # Model-level skill terms are constant across bars (same formula as
+    # predict_with_trained's honest-confidence path).
+    edge_score = max(0.0, min(1.0, (0.25 - model.brier_score) / 0.05))
+    dir_score = max(0.0, min(1.0, (model.direction_accuracy_pct / 100.0 - 0.5) * 5.0))
+    skill = (edge_score + dir_score) / 2.0
+    model_block = {
+        "directionAccuracyPct": round(model.direction_accuracy_pct, 2),
+        "brierScore": round(model.brier_score, 4),
+    }
+
+    # In-sample gate: the model must not vote on bars that were part of its
+    # own training data — an auto-trained model "predicting" its training
+    # window would inflate the measured accuracy with look-ahead. Only bars
+    # AFTER the training data's last candle get a vote. Legacy pickles
+    # without the field (train_data_end_t=0 means unknown) are treated as
+    # trained-on-everything: no historical votes, live-forward only.
+    cutoff_t = model.train_data_end_t
+    if cutoff_t <= 0:
+        return {}
+
+    out: Dict[int, dict] = {}
+    for j in range(X.shape[0]):
+        bar_index = j + 50 + horizon   # scan bar whose prefix ends at row j
+        if bar_index >= len(candles) or int(candles[bar_index]["t"]) <= cutoff_t:
+            continue
+        vol = float(vol_scalers[j]) if j < vol_scalers.size and vol_scalers[j] > 0 else model.median_vol_scaler
+        ensemble = float(np.median([rf_raw[j] * vol, gbm_raw[j] * vol, mlp_raw[j] * vol]))
+        ensemble = max(-0.05, min(0.05, ensemble))
+        proba_up: Optional[float] = float(proba_all[j]) if proba_all is not None else None
+        if proba_up is not None:
+            direction = "UP" if proba_up >= 0.55 else "DOWN" if proba_up <= 0.45 else "FLAT"
+            confidence = round(min(0.95, abs(proba_up - 0.5) * 2.0 * skill), 3)
+        else:
+            exp_pct = (np.exp(ensemble) - 1.0) * 100
+            direction = "UP" if ensemble > 5e-4 else "DOWN" if ensemble < -5e-4 else "FLAT"
+            base_conf = max(0.0, min(0.4, abs(exp_pct) / 1.0))
+            confidence = round(min(0.6, base_conf + max(0.0, model.oos_r2) * 0.4), 3)
+        out[bar_index] = {
+            "ready": True,
+            "direction": direction,
+            "confidence": confidence,
+            "probUp": round(proba_up, 4) if proba_up is not None else None,
+            "model": model_block,
+        }
+    return out
 
 
 def registry() -> dict:

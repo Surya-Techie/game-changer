@@ -23,20 +23,24 @@ class AdvisorRequest(BaseModel):
 
 @router.post("/recommend")
 async def recommend_route(req: AdvisorRequest):
-    try:
-        import yfinance as yf
-    except ImportError:
-        raise HTTPException(status_code=500, detail="yfinance unavailable")
+    # Use the shared hardened fetcher: disk cache, rate-limit fallback, and
+    # automatic BSE↔NSE twin retry (Yahoo's .BO coverage is spotty — this is
+    # what made arbitrary all-stocks symbols 404 here).
+    from nse_live import fetch_history
 
-    ticker = req.symbol if req.symbol.endswith((".NS", ".BO")) else f"{req.symbol}.NS"
-    raw = yf.download(ticker, period=f"{req.lookback_days}d",
-                      progress=False, auto_adjust=False)
-    if raw is None or raw.empty:
-        raise HTTPException(status_code=404, detail=f"No data for {req.symbol}")
-    if isinstance(raw.columns, pd.MultiIndex):
-        raw.columns = [c[0] for c in raw.columns]
-    df = raw.rename(columns={c: c.lower() for c in raw.columns})
-    df = df[["open", "high", "low", "close", "volume"]].dropna().reset_index()
+    period = "2y" if req.lookback_days > 366 else "1y" if req.lookback_days > 183 else "6mo"
+    candles = fetch_history(req.symbol, interval="1d", period=period)
+    if not candles or len(candles) < 60:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No usable daily history for {req.symbol} on Yahoo Finance (tried both NSE/BSE listings)",
+        )
+    df = pd.DataFrame([
+        {"Date": pd.to_datetime(c["t"], unit="ms"), "open": c["o"], "high": c["h"],
+         "low": c["l"], "close": c["c"], "volume": c["v"]}
+        for c in candles
+    ])
+    df = df[["Date", "open", "high", "low", "close", "volume"]].dropna().reset_index(drop=True)
 
     rec = recommend(df, req.symbol, vix=req.vix)
     return {

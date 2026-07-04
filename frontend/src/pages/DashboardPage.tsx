@@ -560,7 +560,10 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="h-screen flex bg-app-radial text-slate-200">
+    // h-full (not h-screen): html/body/#root are height:100%, so this tracks
+    // the real viewport even when browser zoom makes 100vh ≠ window height
+    // (the classic "black strip under the app" bug).
+    <div className="h-full flex bg-app-radial text-slate-200">
       <Sidebar
         symbols={symbols}
         prices={prices}
@@ -576,6 +579,8 @@ export default function DashboardPage() {
           wsStatus={status}
           onOpenNotifications={() => setDrawerOpen(true)}
           unreadCount={notifications.length}
+          ticker={{ symbols: UNIVERSE, prices, prev: prevPrices }}
+          onSelectSymbol={setActive}
         />
         <PortfolioHeader portfolio={portfolio} onChangeMode={changeMode} onToggleKillSwitch={toggleKillSwitch} />
 

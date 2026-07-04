@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import clsx from "clsx";
+import { api } from "../lib/api";
 import {
   fetchPatternAnalytics,
   type AnalyticsBundle,
   type AnalyticsParams,
   type LeaderboardRow,
 } from "../lib/patternApi";
-import PatternLiveChart from "../components/PatternLiveChart";
 import PowerAnalysisPanel from "../components/PowerAnalysisPanel";
-import ChanAdvisorCard from "../components/ChanAdvisorCard";
+import SymbolSearchInput from "../components/SymbolSearchInput";
 
 /**
  * Pattern Analytics dashboard — Phase 10.
@@ -69,11 +69,34 @@ export default function PatternAnalyticsPage() {
   const [timeframes, setTimeframes] = useState<string[]>([]);
   const [directions, setDirections] = useState<string[]>([]);
 
+  // The symbol handed to the heavy panels (chart / power analysis / Chan
+  // advisor) and to the analytics query. It changes ONLY when the user
+  // commits — picks a suggestion or presses Enter — never while typing,
+  // so half-typed tickers ("ZOMA…") fire zero API calls.
+  const [panelSymbol, setPanelSymbol] = useState(
+    (searchParams.get("symbol") ?? "").split(",")[0]?.trim().toUpperCase() || "RELIANCE"
+  );
+  const [appliedSymbols, setAppliedSymbols] = useState<string>(searchParams.get("symbol") ?? "");
+  const commitSymbols = (picked?: string) => {
+    // Note: on suggestion pick this closure still sees the pre-pick input,
+    // whose last segment is the partial query — replace it with the picked
+    // symbol rather than appending alongside it.
+    const list = symbolsInput.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+    if (picked) {
+      if (list.length) list[list.length - 1] = picked;
+      else list.push(picked);
+    }
+    const unique = [...new Set(list)];
+    setAppliedSymbols(unique.join(","));
+    setPanelSymbol(picked || unique[0] || "RELIANCE");
+  };
+
   const params: AnalyticsParams = useMemo(() => {
     const preset = RANGE_PRESETS.find((p) => p.id === rangePreset) ?? RANGE_PRESETS[1];
     const until = new Date();
     const since = new Date(until.getTime() - preset.days * 24 * 60 * 60 * 1000);
-    const syms = symbolsInput
+    // Committed (Enter / suggestion pick) symbols only — not raw keystrokes.
+    const syms = appliedSymbols
       .split(",")
       .map((s) => s.trim().toUpperCase())
       .filter(Boolean);
@@ -84,7 +107,7 @@ export default function PatternAnalyticsPage() {
       timeframes: timeframes as Array<"M5" | "M15" | "H1" | "D1">,
       directions: directions as Array<"bullish" | "bearish" | "continuation" | "neutral">,
     };
-  }, [rangePreset, symbolsInput, timeframes, directions]);
+  }, [rangePreset, appliedSymbols, timeframes, directions]);
 
   useEffect(() => {
     let aborted = false;
@@ -114,7 +137,7 @@ export default function PatternAnalyticsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-app-radial text-slate-200">
+    <div className="min-h-full bg-app-radial text-slate-200">
       <header className="border-b border-bg-border bg-bg-panel-solid/60 backdrop-blur-glass px-6 py-4 flex items-center justify-between">
         <div>
           <Link to="/" className="text-xs text-slate-500 hover:text-white">← Dashboard</Link>
@@ -143,6 +166,7 @@ export default function PatternAnalyticsPage() {
           rangePreset={rangePreset}
           onRange={setRangePreset}
           symbolsInput={symbolsInput}
+          onCommitSymbol={(s) => commitSymbols(s)}
           onSymbols={setSymbolsInput}
           timeframes={timeframes}
           onTimeframes={(v) => toggleSet(timeframes, v, setTimeframes)}
@@ -150,30 +174,17 @@ export default function PatternAnalyticsPage() {
           onDirections={(v) => toggleSet(directions, v, setDirections)}
         />
 
-        {/* Power Analysis — super-composer button & chart with BUY/SELL arrows */}
-        <PowerAnalysisPanel
-          symbol={(() => {
-            const first = symbolsInput.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean)[0];
-            return first || "RELIANCE";
-          })()}
-          onSymbolChange={(s) => setSymbolsInput(s)}
-        />
+        {/* Power Analysis — THE signal panel. One chart, one POWER mode,
+            BUY/SELL arrows + levels + per-bar verdict timeline. The old
+            duplicate pattern chart and advisor card were removed: three
+            overlapping chart panels made the page confusing without
+            adding signal. */}
+        <PowerAnalysisPanel symbol={panelSymbol} onSymbolChange={(s) => setSymbolsInput(s)} />
 
-        <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-3">
-          <PatternLiveChart
-            symbol={(() => {
-              const first = symbolsInput.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean)[0];
-              return first || "RELIANCE";
-            })()}
-            onSymbolChange={(s) => setSymbolsInput(s)}
-          />
-          <ChanAdvisorCard
-            symbol={(() => {
-              const first = symbolsInput.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean)[0];
-              return first || "RELIANCE";
-            })()}
-          />
-        </div>
+        {/* Measured (backtested) per-pattern performance — the ground truth
+            the AI confidence engine is calibrated against. Collapsed by
+            default; reference material, not a live control. */}
+        <CalibrationPanel />
 
         {error && <div className="text-sm text-accent-sell">{error}</div>}
 
@@ -212,6 +223,105 @@ export default function PatternAnalyticsPage() {
   );
 }
 
+// ─── Measured calibration panel ─────────────────────────────────────────────
+
+interface CalibrationRow {
+  pattern_name: string;
+  win_rate: number;
+  expectancy_r: number;
+  samples: number;
+  resolved: number;
+  expired: number;
+  verdict: "TRADEABLE" | "MARGINAL" | "AVOID";
+}
+
+function CalibrationPanel() {
+  const [rows, setRows] = useState<CalibrationRow[]>([]);
+  const [meta, setMeta] = useState<{ source?: string; total_trades?: number; generated?: string } | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    let aborted = false;
+    api.get("/api/patterns/calibration")
+      .then((r) => {
+        if (aborted || !r.data?.available) return;
+        setRows(r.data.patterns ?? []);
+        setMeta(r.data.meta ?? null);
+      })
+      .catch(() => {});
+    return () => { aborted = true; };
+  }, []);
+
+  if (rows.length === 0) return null;
+
+  const tradeable = rows.filter((r) => r.verdict === "TRADEABLE").length;
+  const avoid = rows.filter((r) => r.verdict === "AVOID").length;
+
+  return (
+    <section className="card-aurora rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full px-5 py-3 flex items-center justify-between text-left"
+      >
+        <div>
+          <div className="text-sm font-semibold text-white">
+            Measured pattern performance <span className="text-[10px] font-mono text-emerald-400/90 ml-1">REAL BACKTEST</span>
+          </div>
+          <div className="text-[11px] text-slate-500 mt-0.5">
+            {meta?.source ?? "walk-forward event study"} · {meta?.total_trades ?? "—"} simulated trades ·
+            {" "}{tradeable} tradeable · {avoid} confidence-penalised. This is what the AI confidence engine is calibrated against.
+          </div>
+        </div>
+        <span className="text-slate-500 text-xs font-mono">{open ? "▲ collapse" : "▼ expand"}</span>
+      </button>
+      {open && (
+        <div className="overflow-x-auto border-t border-bg-border">
+          <table className="w-full text-sm">
+            <thead className="text-[10px] uppercase tracking-wider text-slate-500 bg-black/10">
+              <tr>
+                <th className="text-left px-4 py-2.5">Pattern</th>
+                <th className="text-center px-3 py-2.5">Verdict</th>
+                <th className="text-right px-3 py-2.5 font-mono">Expectancy</th>
+                <th className="text-right px-3 py-2.5 font-mono">Win rate*</th>
+                <th className="text-right px-3 py-2.5 font-mono">Samples</th>
+                <th className="text-right px-3 py-2.5 font-mono">Resolved</th>
+                <th className="text-right px-4 py-2.5 font-mono">Expired</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-bg-border">
+              {rows.map((r) => (
+                <tr key={r.pattern_name} className="hover:bg-white/[0.01]">
+                  <td className="px-4 py-1.5 text-slate-200">{r.pattern_name}</td>
+                  <td className="px-3 py-1.5 text-center">
+                    <span className={clsx(
+                      "px-1.5 py-0.5 rounded text-[10px] font-bold",
+                      r.verdict === "TRADEABLE" ? "bg-accent-buy/15 text-accent-buy" :
+                      r.verdict === "AVOID" ? "bg-accent-sell/15 text-accent-sell" :
+                      "bg-slate-500/15 text-slate-400"
+                    )}>{r.verdict}</span>
+                  </td>
+                  <td className={clsx("px-3 py-1.5 text-right font-mono",
+                    r.expectancy_r >= 0.05 ? "text-accent-buy" : r.expectancy_r <= -0.05 ? "text-accent-sell" : "text-slate-300")}>
+                    {r.expectancy_r >= 0 ? "+" : ""}{r.expectancy_r.toFixed(3)}R
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono text-slate-300">{(r.win_rate * 100).toFixed(0)}%</td>
+                  <td className="px-3 py-1.5 text-right font-mono text-slate-400">{r.samples}</td>
+                  <td className="px-3 py-1.5 text-right font-mono text-slate-400">{r.resolved}</td>
+                  <td className="px-4 py-1.5 text-right font-mono text-slate-500">{r.expired}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="px-4 py-2 text-[10px] text-slate-500 border-t border-bg-border">
+            *Win rate is shrunk toward 50% for small samples (Bayesian prior), so thin patterns can't claim extreme rates.
+            Patterns marked AVOID get a confidence penalty of up to −25 points in the live engine, keeping them below emit thresholds.
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ─── Filter bar ───────────────────────────────────────────────────────────
 
 interface FilterProps {
@@ -219,6 +329,7 @@ interface FilterProps {
   onRange: (s: string) => void;
   symbolsInput: string;
   onSymbols: (s: string) => void;
+  onCommitSymbol: (symbol: string) => void;
   timeframes: string[];
   onTimeframes: (s: string) => void;
   directions: string[];
@@ -230,6 +341,7 @@ function FilterBar({
   onRange,
   symbolsInput,
   onSymbols,
+  onCommitSymbol,
   timeframes,
   onTimeframes,
   directions,
@@ -288,13 +400,12 @@ function FilterBar({
 
         <label className="flex items-center gap-2">
           <span className="text-[11px] uppercase tracking-wider text-slate-500">Symbols</span>
-          <input
-            type="text"
-            placeholder="RELIANCE,TCS (blank = all)"
+          <SymbolSearchInput
             value={symbolsInput}
-            onChange={(e) => onSymbols(e.target.value)}
-            className="bg-bg-elevated border border-bg-border rounded px-2 py-1 text-xs text-slate-200 font-mono"
-            style={{ width: 220 }}
+            onChange={onSymbols}
+            onCommit={onCommitSymbol}
+            placeholder="Search symbol or company, Enter to run…"
+            className="w-[280px]"
           />
         </label>
       </div>

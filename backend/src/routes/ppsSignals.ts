@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
-import { getCandles } from "../services/candleAggregator.js";
+import { getCandlesSmart } from "../services/candleAggregator.js";
 import { getPpsSignals, recordPpsOutcomes, type PpsBarIn } from "../services/aiClient.js";
 
 /**
@@ -28,7 +28,7 @@ router.post("/", async (req, res, next) => {
       bars = req.body.bars as PpsBarIn[];
     } else {
       // Pull candles from the in-memory aggregator and convert to PPS bar shape.
-      const candles = getCandles(String(symbol).toUpperCase(), 500);
+      const candles = await getCandlesSmart(String(symbol).toUpperCase(), 500);
       if (candles.length < 50) {
         return res.json({
           symbol,
@@ -77,7 +77,7 @@ router.post("/record", async (req, res, next) => {
     if (Array.isArray(req.body?.bars) && req.body.bars.length > 0) {
       bars = req.body.bars as PpsBarIn[];
     } else {
-      const candles = getCandles(String(symbol).toUpperCase(), 500);
+      const candles = await getCandlesSmart(String(symbol).toUpperCase(), 500);
       if (candles.length < 50) {
         return res.json({ recorded: 0, reason: "not enough candle history" });
       }

@@ -67,9 +67,16 @@ router.post("/", async (req, res, next) => {
       symbol,
       side: desiredSide,
       qty,
+      // originalQty is required by the schema (partial-TP bookkeeping);
+      // omitting it made every manual order 500 while auto orders worked.
+      originalQty: qty,
       entryPrice: fill.filledPrice,
+      initialStopPrice: body.stop,
       stopPrice: body.stop,
       targetPrice: body.target,
+      highWatermark: fill.filledPrice,
+      lowWatermark: fill.filledPrice,
+      partialTpDone: false,
     });
 
     await positionManager.broadcastPortfolio(userId);

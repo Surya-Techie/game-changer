@@ -1,3 +1,4 @@
+import { SymbolPicker } from "../components/SymbolSearchInput";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -129,7 +130,7 @@ export default function BacktestPage() {
   }
 
   return (
-    <div className="min-h-screen bg-app-radial text-slate-200">
+    <div className="min-h-full bg-app-radial text-slate-200">
       <header className="border-b border-bg-border bg-bg-panel-solid/60 backdrop-blur-glass px-6 py-4 flex items-center justify-between print:hidden">
         <div>
           <Link to="/" className="text-xs text-slate-500 hover:text-white">← Dashboard</Link>
@@ -172,9 +173,7 @@ export default function BacktestPage() {
         <>
         <section className="bg-bg-panel-solid/70 backdrop-blur-glass border border-bg-border rounded-xl p-5 grid grid-cols-2 md:grid-cols-6 gap-4 items-end print:hidden">
           <Field label="Symbol">
-            <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="input">
-              {SYMBOLS.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            <SymbolPicker value={symbol} onSelect={setSymbol} placeholder="Search any stock…" />
           </Field>
           <Field label="Bars">
             <input type="number" min={100} max={1000} value={bars} onChange={(e) => setBars(Number(e.target.value))} className="input" />
@@ -867,9 +866,7 @@ function PatternBacktestTab() {
         <div className="text-sm uppercase tracking-wider text-slate-500 mb-4">Pattern backtest configuration</div>
         <div className="grid grid-cols-2 md:grid-cols-6 gap-4 items-end">
           <Field label="Symbol">
-            <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="input">
-              {SYMBOLS.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            <SymbolPicker value={symbol} onSelect={setSymbol} placeholder="Search any stock…" />
           </Field>
           <Field label="Start date">
             <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="input" />

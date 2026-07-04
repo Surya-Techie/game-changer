@@ -114,6 +114,20 @@ class MockFeed extends EventEmitter {
     return Date.now() - this.lastRealAt < 5_000;
   }
 
+  /**
+   * Anchor a symbol's synthetic walk at a real price (called by the candle
+   * warmup with the last real close). Without this the walk starts from the
+   * hardcoded — and long-stale — UNIVERSE base prices, so the first few
+   * synthetic ticks sit thousands of rupees away from the real level and
+   * poison the first live candle after startup.
+   */
+  adoptPrice(symbol: string, price: number): void {
+    const state = this.states.get(symbol);
+    if (!state || !isFinite(price) || price <= 0) return;
+    state.price = round2(price);
+    state.anchor = state.price;
+  }
+
   start(_intervalMs = 800) {
     if (this.running) return;
     this.running = true;
@@ -216,7 +230,10 @@ class MockFeed extends EventEmitter {
         // resume from the right level if NSE goes briefly unreachable.
         state.price = round2(px);
         state.anchor = state.price;
-        const tick: Tick = { symbol: sym, price: state.price, volume: 0, ts: q.ts ?? now };
+        // Stamp with receipt time, not the quote's own timestamp: quote ts
+        // can lag wall clock by minutes, and mixing clock sources makes the
+        // candle aggregator see time going backwards.
+        const tick: Tick = { symbol: sym, price: state.price, volume: 0, ts: now };
         this.emit("tick", tick);
         emitted++;
       }
