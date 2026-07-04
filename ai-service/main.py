@@ -13,7 +13,7 @@ Exposes:
 from __future__ import annotations
 
 import os
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Tuple
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
@@ -648,17 +648,56 @@ try:
         stop_pct: Optional[float] = Field(None, ge=0.1, le=20.0)
         target_pct: Optional[float] = Field(None, ge=0.1, le=30.0)
 
+    # Stampede control. A full scan is ~7 s of GIL-bound CPU; concurrent
+    # identical requests (page double-mounts, live reruns racing a slow
+    # response, multiple tabs) multiplied each other's latency until runs
+    # took 45–120 s and timed out. Identical requests now coalesce on a
+    # per-key lock and share one cached result; distinct scans are capped
+    # at 2 in flight so a burst queues instead of thrashing.
+    import threading as _threading
+    import time as _pa_time
+
+    _PA_CACHE: Dict[str, Tuple[dict, float]] = {}
+    _PA_LOCKS: Dict[str, _threading.Lock] = {}
+    _PA_META_LOCK = _threading.Lock()
+    _PA_SEM = _threading.BoundedSemaphore(2)
+    _PA_TTL = 90.0  # a bar-close rerun changes the key (new tail candle)
+
+    def _pa_key(req: PowerAnalysisRequest) -> str:
+        tail = req.candles[-1]
+        return (
+            f"{req.symbol}|{req.mode}|{req.use_ml}|{req.target_r}|"
+            f"{req.stop_pct}|{req.target_pct}|{len(req.candles)}|{tail.t}|{tail.c}"
+        )
+
     @app.post("/power-analysis")
     def power_analysis_endpoint(req: PowerAnalysisRequest) -> dict:
-        return run_power_analysis(
-            _candles_to_dicts(req.candles),
-            symbol=req.symbol,
-            mode=req.mode,
-            use_ml=req.use_ml,
-            target_r=req.target_r,
-            stop_pct=req.stop_pct,
-            target_pct=req.target_pct,
-        )
+        key = _pa_key(req)
+        hit = _PA_CACHE.get(key)
+        if hit and _pa_time.time() - hit[1] < _PA_TTL:
+            return hit[0]
+        with _PA_META_LOCK:
+            lock = _PA_LOCKS.setdefault(key, _threading.Lock())
+        with lock:
+            hit = _PA_CACHE.get(key)
+            if hit and _pa_time.time() - hit[1] < _PA_TTL:
+                return hit[0]
+            with _PA_SEM:
+                result = run_power_analysis(
+                    _candles_to_dicts(req.candles),
+                    symbol=req.symbol,
+                    mode=req.mode,
+                    use_ml=req.use_ml,
+                    target_r=req.target_r,
+                    stop_pct=req.stop_pct,
+                    target_pct=req.target_pct,
+                )
+            _PA_CACHE[key] = (result, _pa_time.time())
+            if len(_PA_CACHE) > 40:   # drop the oldest half, keep memory flat
+                for k in sorted(_PA_CACHE, key=lambda k: _PA_CACHE[k][1])[:20]:
+                    _PA_CACHE.pop(k, None)
+                    _PA_LOCKS.pop(k, None)
+            return result
 except Exception:  # noqa: BLE001
     pass
 
