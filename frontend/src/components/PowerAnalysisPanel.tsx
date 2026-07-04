@@ -1167,7 +1167,9 @@ function SignalTimeline({ signals, tfLabel }: { signals: PowerSignal[]; tfLabel:
                 {buy ? "▲ BUY" : sell ? "▼ SELL" : "· HOLD"}
               </span>
               <span className="text-[9px] font-mono text-slate-500 leading-tight">
-                {new Date(s.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                {tfLabel === "1d"
+                  ? new Date(s.t).toLocaleDateString([], { day: "2-digit", month: "short" })
+                  : new Date(s.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
               </span>
               {(buy || sell) && (
                 <span className="text-[9px] font-mono text-slate-300 leading-tight">{conf}%</span>
