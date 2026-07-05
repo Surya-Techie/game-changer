@@ -138,12 +138,22 @@ Mode = Literal["power", "strict", "loose"]
 
 
 # Round-trip trading cost (% of notional) deducted from EVERY simulated
-# trade's return: ~0.03% brokerage/side + STT/exchange charges + ~2 bps
-# slippage/side. NSE cash delivery runs nearer 0.25%, pure intraday nearer
-# 0.10% — one conservative middle number keeps the reported expectancy
-# honest without plumbing the timeframe through. Win/loss classification
+# trade's return: brokerage + STT/exchange charges + slippage. The bar
+# interval decides which applies — NSE intraday runs ~0.12%, cash
+# delivery (daily bars → multi-day holds) ~0.25%. Win/loss classification
 # on target/stop hits is unaffected; time-outs are bucketed by NET sign.
-ROUND_TRIP_COST_PCT = 0.20
+ROUND_TRIP_COST_INTRADAY_PCT = 0.12
+ROUND_TRIP_COST_DELIVERY_PCT = 0.25
+ROUND_TRIP_COST_PCT = ROUND_TRIP_COST_DELIVERY_PCT   # default / fallback
+
+
+def _round_trip_cost_pct(candles: List[dict]) -> float:
+    """Pick the cost tier from the bar interval (< 20 h → intraday)."""
+    if len(candles) < 2:
+        return ROUND_TRIP_COST_PCT
+    diffs = sorted(int(candles[j]["t"]) - int(candles[j - 1]["t"]) for j in range(1, len(candles)))
+    interval_ms = diffs[len(diffs) // 2]
+    return ROUND_TRIP_COST_INTRADAY_PCT if interval_ms < 20 * 3600 * 1000 else ROUND_TRIP_COST_DELIVERY_PCT
 
 
 # Per-source weight in the consensus tally. Sources with measured edge get
@@ -823,7 +833,8 @@ def _summarise(signals: List[dict]) -> dict:
 
 
 def _resolve_outcome(
-    signal: dict, candles: List[dict], start_idx: int, horizon_bars: int
+    signal: dict, candles: List[dict], start_idx: int, horizon_bars: int,
+    cost_pct: float = ROUND_TRIP_COST_PCT,
 ) -> Tuple[str, float]:
     """Walk forward from a signal's bar until target or stop hits.
 
@@ -876,7 +887,7 @@ def _resolve_outcome(
     if not is_buy and (entry >= stop or entry <= target):
         return ("skip", 0.0)
 
-    cost = ROUND_TRIP_COST_PCT / 100.0
+    cost = cost_pct / 100.0
 
     def net(exit_price: float) -> float:
         return (exit_price - entry) / entry * side - cost
@@ -918,7 +929,12 @@ def _measure_accuracy(
     point, and we only inspect bars strictly after that. Signals whose
     forward window extends past the end of the candle series are SKIPPED
     (not counted as wins or losses) — we don't know their real outcome.
+
+    Side effect: every actionable signal dict is annotated in place with
+    `outcome` ("win" / "loss" / "skip" / "pending") and `net_return_pct`,
+    so the UI can show a per-signal log with resolved results.
     """
+    cost_pct = _round_trip_cost_pct(candles)
     actionable = [s for s in signals if s["signal"] in ("BUY", "SELL")]
     if not actionable:
         return {
@@ -942,14 +958,18 @@ def _measure_accuracy(
     for s in actionable:
         bar_idx = int(s.get("bar_index", -1))
         if bar_idx < 0 or bar_idx + 1 >= len(candles):
+            s["outcome"] = "pending"
             unresolved += 1
             continue
         # If the horizon would extend past the data we have, skip — we
         # can't honestly say whether the trade would have won or lost.
         if bar_idx + horizon_bars >= len(candles):
+            s["outcome"] = "pending"
             unresolved += 1
             continue
-        outcome, ret = _resolve_outcome(s, candles, bar_idx, horizon_bars)
+        outcome, ret = _resolve_outcome(s, candles, bar_idx, horizon_bars, cost_pct)
+        s["outcome"] = outcome
+        s["net_return_pct"] = round(ret * 100.0, 3)
         if outcome == "skip":
             unresolved += 1
             continue
@@ -976,10 +996,10 @@ def _measure_accuracy(
         "avg_per_trade_pct": round(avg_per_trade, 3),
         "total_return_pct": round(sum(pnl_pcts), 2),
         "unresolved_signals": unresolved,
-        "round_trip_cost_pct": ROUND_TRIP_COST_PCT,
+        "round_trip_cost_pct": cost_pct,
         "honest_note": (
             "Measured with next-bar-open fills, gap-through stop slippage, "
-            f"and {ROUND_TRIP_COST_PCT}% round-trip costs deducted from every trade "
+            f"and {cost_pct}% round-trip costs deducted from every trade "
             "— all returns are NET. No look-ahead: each bar's signal uses only "
             "prior bars, and the ML head votes only on bars after its training "
             "window. Past performance is not a guarantee."

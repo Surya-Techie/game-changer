@@ -463,17 +463,31 @@ def _confidence(
 # missing the intraday setups simply don't run.
 
 _IST_OFFSET_MS = int(5.5 * 3600 * 1000)
+# NSE cash session: 09:15–15:30 IST, in minutes-of-day.
+_NSE_OPEN_MIN = 9 * 60 + 15
+_NSE_CLOSE_MIN = 15 * 60 + 30
 
 
 def _session_ids(ts: List[Optional[int]]) -> Optional[List[int]]:
-    """Map each bar to a session index (IST calendar day). None if no ts."""
+    """Map each bar to a session index; -1 for bars OUTSIDE NSE hours.
+
+    Sessions are NSE trading sessions (09:15–15:30 IST per calendar day),
+    not calendar days — otherwise pre-market data or a dev feed that ticks
+    around the clock builds "opening ranges" out of midnight bars and
+    poisons PDH/PDL/VWAP. Out-of-hours bars get -1 and contribute nothing.
+    """
     if not ts or any(t is None for t in ts):
         return None
     out: List[int] = []
     last_day = None
     sid = -1
     for t in ts:
-        day = (int(t) + _IST_OFFSET_MS) // 86_400_000
+        ist = int(t) + _IST_OFFSET_MS
+        mins = (ist // 60_000) % 1440
+        if not (_NSE_OPEN_MIN <= mins <= _NSE_CLOSE_MIN):
+            out.append(-1)
+            continue
+        day = ist // 86_400_000
         if day != last_day:
             sid += 1
             last_day = day
@@ -503,17 +517,25 @@ def _session_series(
     pdl: List[Optional[float]] = [None] * n
     vwap: List[Optional[float]] = [None] * n
 
-    sess_start = 0
+    cur_sid: Optional[int] = None
     prev_hi: Optional[float] = None
     prev_lo: Optional[float] = None
     run_hi = run_lo = None
+    or_h_acc = or_l_acc = None
+    bars_in = 0
     cum_pv = cum_v = 0.0
     for i in range(n):
-        if i > 0 and sessions[i] != sessions[i - 1]:
-            prev_hi, prev_lo = run_hi, run_lo
-            sess_start = i
+        s = sessions[i]
+        if s < 0:
+            continue   # out-of-hours bar: no features, contributes nothing
+        if s != cur_sid:
+            prev_hi, prev_lo = run_hi, run_lo   # finalise the prior session
+            cur_sid = s
             run_hi = run_lo = None
+            or_h_acc = or_l_acc = None
+            bars_in = 0
             cum_pv = cum_v = 0.0
+        bars_in += 1
         run_hi = highs[i] if run_hi is None else max(run_hi, highs[i])
         run_lo = lows[i] if run_lo is None else min(run_lo, lows[i])
         tp = (highs[i] + lows[i] + closes[i]) / 3.0
@@ -522,10 +544,12 @@ def _session_series(
         cum_v += v
         vwap[i] = cum_pv / cum_v if cum_v > 0 else None
         pdh[i], pdl[i] = prev_hi, prev_lo
-        bars_in = i - sess_start + 1
-        if bars_in > or_bars:
-            or_high[i] = max(highs[sess_start: sess_start + or_bars])
-            or_low[i] = min(lows[sess_start: sess_start + or_bars])
+        if bars_in <= or_bars:
+            or_h_acc = highs[i] if or_h_acc is None else max(or_h_acc, highs[i])
+            or_l_acc = lows[i] if or_l_acc is None else min(or_l_acc, lows[i])
+        else:
+            or_high[i] = or_h_acc
+            or_low[i] = or_l_acc
     return or_high, or_low, pdh, pdl, vwap
 
 
@@ -539,26 +563,29 @@ def _supertrend_dirs(
     atr = _atr_series(highs, lows, closes, period)
     direction = [0] * n
     line: List[Optional[float]] = [None] * n
-    ub = lb = None   # final upper / lower bands
+    fub = flb = None   # final upper / lower bands (canonical carry rules)
     d = 0
     for i in range(n):
         a = atr[i]
         if a is None:
             continue
         hl2 = (highs[i] + lows[i]) / 2.0
-        bub = hl2 + mult * a
+        bub = hl2 + mult * a   # basic bands
         blb = hl2 - mult * a
         prev_close = closes[i - 1] if i > 0 else closes[i]
-        ub = bub if ub is None or bub < ub or prev_close > ub else ub
-        lb = blb if lb is None or blb > lb or prev_close < lb else lb
-        if d <= 0 and closes[i] > (ub if ub is not None else bub):
-            d = 1
-        elif d >= 0 and closes[i] < (lb if lb is not None else blb):
-            d = -1
-        elif d == 0:
+        # Canonical band carry: the upper band may only move DOWN unless
+        # the prior close broke above it; the lower band only UP unless
+        # the prior close broke below it.
+        fub = bub if fub is None or bub < fub or prev_close > fub else fub
+        flb = blb if flb is None or blb > flb or prev_close < flb else flb
+        if d == 0:
             d = 1 if closes[i] >= hl2 else -1
+        elif d == 1 and closes[i] < flb:
+            d = -1
+        elif d == -1 and closes[i] > fub:
+            d = 1
         direction[i] = d
-        line[i] = lb if d == 1 else ub
+        line[i] = flb if d == 1 else fub
     return direction, line
 
 
@@ -594,7 +621,7 @@ def _india_setup_candidates(
         return {"pattern": pattern, "direction": direction, "entry": c,
                 "stop": stop, "target": target, "formation_bars": formation}
 
-    same_sess = sessions is not None and sessions[i] == sessions[i - 1]
+    same_sess = sessions is not None and sessions[i] >= 0 and sessions[i] == sessions[i - 1]
     if same_sess:
         # Opening Range Breakout — first cross of the opening range.
         if or_high and or_high[i] is not None and or_high[i - 1] is not None:
@@ -676,12 +703,19 @@ def generate_pps_signals(
     # features need bar timestamps; without them only Supertrend runs.
     ts = [b.get("t") for b in bars]
     sessions = _session_ids(ts)
-    # Intraday = several bars per IST session. Daily bars (1 bar/session)
+    # Intraday = several bars per NSE session. Daily bars (1 bar/session)
     # must NOT get session features — a 1-bar "VWAP" is just that bar's
     # typical price and crossing it is noise.
-    intraday = sessions is not None and n / (sessions[-1] + 1) >= 5
+    in_sess = [s for s in (sessions or []) if s >= 0]
+    intraday = bool(in_sess) and len(in_sess) / (max(in_sess) + 1) >= 5
     if intraday:
-        or_high, or_low, pdh, pdl, vwap = _session_series(sessions, highs, lows, closes, volumes)
+        # Opening range = the first 15 REAL minutes of the session on any
+        # timeframe (15 bars on 1m, 3 on 5m, 1 on 15m+), not "3 bars".
+        diffs = sorted(int(ts[j]) - int(ts[j - 1]) for j in range(1, len(ts)))
+        interval_ms = diffs[len(diffs) // 2] if diffs else 300_000
+        or_bars = max(1, min(15, round(15 * 60_000 / max(interval_ms, 1))))
+        or_high, or_low, pdh, pdl, vwap = _session_series(
+            sessions, highs, lows, closes, volumes, or_bars=or_bars)
     else:
         or_high = or_low = pdh = pdl = vwap = None
         sessions = None

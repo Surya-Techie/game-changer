@@ -54,6 +54,12 @@ export interface PowerSignal {
   stage?: PowerStageInfo | null;
   /** True when stage != 2 forced every voter down to 0.40 confidence. */
   stage_cap_applied?: boolean;
+  /** Resolved outcome from the walk-forward measurement (actionable
+   *  signals only): win/loss = target-stop resolution net of costs,
+   *  skip = setup invalidated at fill, pending = not enough forward bars. */
+  outcome?: "win" | "loss" | "skip" | "pending";
+  /** Net % return of the resolved trade (after costs). */
+  net_return_pct?: number;
   /** Master Confluence engine summary (TIER 1-4 scoring + top reasons). */
   master_confluence?: PowerMasterConfluence | null;
 }

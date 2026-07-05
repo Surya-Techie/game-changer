@@ -6,6 +6,7 @@ import { evaluateNewPosition, getOrCreateAccountState } from "./riskManager.js";
 import { bus, type SignalEvent } from "./eventBus.js";
 import { broker } from "./brokers/registry.js";
 import { isMarketOpen } from "./paper/marketHours.js";
+import { measuredLossReason } from "./measuredEdge.js";
 import { logger } from "../utils/logger.js";
 
 /**
@@ -93,6 +94,14 @@ class AutoTrader {
 
   private async handleSignal(sig: SignalEvent) {
     if (sig.action === "HOLD") return;
+    // Measured-edge gate: never auto-trade a symbol the POWER analysis
+    // has MEASURED as a loser. The analytics page shows AVOID for these —
+    // the auto-trader must not take trades the app tells the user to skip.
+    const lossReason = measuredLossReason(sig.symbol);
+    if (lossReason) {
+      logger.info("Auto-trade blocked by measured edge", { symbol: sig.symbol, reason: lossReason });
+      return;
+    }
     const states = await AccountState.find({ autoTradeMode: "AUTO", killSwitch: false }).lean();
     for (const state of states) {
       try {
