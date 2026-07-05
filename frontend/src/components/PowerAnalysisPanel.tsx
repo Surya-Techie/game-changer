@@ -18,7 +18,6 @@ import { toCandlestickData } from "../lib/candleSanitize";
 import {
   fetchPowerAnalysis,
   type PowerAccuracy,
-  type PowerMode,
   type PowerSignal,
 } from "../lib/powerAnalysisApi";
 import {
@@ -215,7 +214,30 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
         borderColor: "#1f2a3d",
         scaleMargins: { top: 0.12, bottom: 0.16 },
       },
-      timeScale: { borderColor: "#1f2a3d", timeVisible: true, secondsVisible: false },
+      // NSE times everywhere. lightweight-charts labels the axis and
+      // crosshair in UTC by default, which put the 09:15–15:30 IST session
+      // at "03:45–10:00" — every timestamp wrong by 5½ h for the trader.
+      localization: {
+        timeFormatter: (time: number) =>
+          new Date(time * 1000).toLocaleString("en-IN", {
+            timeZone: "Asia/Kolkata",
+            day: "2-digit", month: "short",
+            hour: "2-digit", minute: "2-digit", hour12: false,
+          }),
+      },
+      timeScale: {
+        borderColor: "#1f2a3d",
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: (time: number, tickMarkType: number) => {
+          const d = new Date(time * 1000);
+          // 0..2 = year/month/day ticks → date label; 3+ = intraday → IST time.
+          if (tickMarkType < 3) {
+            return d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" });
+          }
+          return d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false });
+        },
+      },
       crosshair: { mode: 1 },
       autoSize: true,
     });
@@ -653,6 +675,9 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
   const nextVerdictMs = lastBarT != null ? lastBarT + tfMsNow - nowTs : null;
   const countdown = (() => {
     if (nextVerdictMs == null) return null;
+    // More than 2 bars overdue = no ticks arriving (market closed or feed
+    // down) — say so instead of a stale "on next tick" all weekend.
+    if (nextVerdictMs <= -2 * tfMsNow) return "waiting for market data";
     if (nextVerdictMs <= 0) return "on next tick";
     const s = Math.floor(nextVerdictMs / 1000);
     const h = Math.floor(s / 3600);
@@ -1008,7 +1033,9 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
           <span>{liveStatus || "live — waiting for next bar close"}</span>
           {countdown && (
             <span className="ml-auto text-emerald-200/90">
-              next {tfLabel} verdict in <span className="font-semibold">{countdown}</span>
+              {countdown === "waiting for market data"
+                ? <span className="font-semibold">waiting for market data</span>
+                : <>next {tfLabel} verdict in <span className="font-semibold">{countdown}</span></>}
             </span>
           )}
         </div>
