@@ -19,7 +19,7 @@ import SymbolSearchInput from "../components/SymbolSearchInput";
  * Matches PaperAnalyticsPage visual conventions (no external chart deps).
  */
 
-const TIMEFRAMES = ["M5", "M15", "H1", "D1"] as const;
+const TIMEFRAMES = ["M1", "M5", "M15", "M30", "H1", "D1"] as const;
 const DIRECTIONS = ["bullish", "bearish", "continuation", "neutral"] as const;
 
 const EMPTY_SUMMARY: AnalyticsBundle["summary"] = {
@@ -104,7 +104,7 @@ export default function PatternAnalyticsPage() {
       since: since.toISOString(),
       until: until.toISOString(),
       symbols: syms,
-      timeframes: timeframes as Array<"M5" | "M15" | "H1" | "D1">,
+      timeframes: timeframes as Array<"M1" | "M5" | "M15" | "M30" | "H1" | "D1">,
       directions: directions as Array<"bullish" | "bearish" | "continuation" | "neutral">,
     };
   }, [rangePreset, appliedSymbols, timeframes, directions]);
@@ -162,18 +162,6 @@ export default function PatternAnalyticsPage() {
       </header>
 
       <main className="max-w-7xl mx-auto p-6 space-y-6">
-        <FilterBar
-          rangePreset={rangePreset}
-          onRange={setRangePreset}
-          symbolsInput={symbolsInput}
-          onCommitSymbol={(s) => commitSymbols(s)}
-          onSymbols={setSymbolsInput}
-          timeframes={timeframes}
-          onTimeframes={(v) => toggleSet(timeframes, v, setTimeframes)}
-          directions={directions}
-          onDirections={(v) => toggleSet(directions, v, setDirections)}
-        />
-
         {/* Power Analysis — THE signal panel. One chart, one POWER mode,
             BUY/SELL arrows + levels + per-bar verdict timeline. The old
             duplicate pattern chart and advisor card were removed: three
@@ -185,6 +173,31 @@ export default function PatternAnalyticsPage() {
             the AI confidence engine is calibrated against. Collapsed by
             default; reference material, not a live control. */}
         <CalibrationPanel />
+
+        {/* ── Background-scanner history ────────────────────────────────
+            Everything below rolls up the pattern DETECTOR service's
+            round-the-clock records — a separate pipeline from the POWER
+            panel above. The filter bar controls ONLY this section (it
+            used to sit at the top of the page, where it looked like it
+            configured the signal panel). */}
+        <div className="pt-2">
+          <h2 className="text-sm font-semibold text-white">Pattern history rollups</h2>
+          <div className="text-xs text-slate-500 mb-3">
+            Aggregated from the background pattern scanner's detections — separate from the POWER signal panel above.
+            Filters below apply to this section only.
+          </div>
+          <FilterBar
+            rangePreset={rangePreset}
+            onRange={setRangePreset}
+            symbolsInput={symbolsInput}
+            onCommitSymbol={(s) => commitSymbols(s)}
+            onSymbols={setSymbolsInput}
+            timeframes={timeframes}
+            onTimeframes={(v) => toggleSet(timeframes, v, setTimeframes)}
+            directions={directions}
+            onDirections={(v) => toggleSet(directions, v, setDirections)}
+          />
+        </div>
 
         {error && <div className="text-sm text-accent-sell">{error}</div>}
 

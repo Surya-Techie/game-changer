@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
 import { getCandlesSmart } from "../services/candleAggregator.js";
 import { getPowerAnalysis, type CandleIn } from "../services/aiClient.js";
+import { recordMeasuredEdge } from "../services/measuredEdge.js";
 
 /**
  * POST /api/power-analysis
@@ -27,7 +28,8 @@ router.post("/", async (req, res, next) => {
     if (!symbol || typeof symbol !== "string") {
       return res.status(400).json({ error: "symbol required" });
     }
-    const m = mode === "loose" ? "loose" : "strict";
+    // Single POWER rule; legacy "strict"/"loose" pass through as aliases.
+    const m = mode === "loose" || mode === "strict" ? mode : "power";
 
     let candles: CandleIn[] | null = null;
     if (Array.isArray(req.body?.candles) && req.body.candles.length > 0) {
@@ -64,6 +66,12 @@ router.post("/", async (req, res, next) => {
     if (!data) {
       return res.status(502).json({ error: "AI service unavailable" });
     }
+    // Feed the measured-edge store — the auto-trader consults this to
+    // refuse symbols the POWER measurement marks as losers.
+    const accuracy = (data as {
+      accuracy?: { resolved_signals?: number; win_rate_pct?: number; avg_per_trade_pct?: number };
+    }).accuracy;
+    recordMeasuredEdge(String(symbol), accuracy ?? null);
     res.json(data);
   } catch (err) {
     next(err);

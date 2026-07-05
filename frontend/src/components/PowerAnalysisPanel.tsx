@@ -18,7 +18,6 @@ import { toCandlestickData } from "../lib/candleSanitize";
 import {
   fetchPowerAnalysis,
   type PowerAccuracy,
-  type PowerMode,
   type PowerSignal,
 } from "../lib/powerAnalysisApi";
 import {
@@ -66,6 +65,21 @@ const TF_MS: Record<PatternChartTimeframe, number> = {
   Y1: 365 * 24 * 60 * 60_000,
 };
 
+/** Default stop/target (%) per timeframe, ~2.5:1 throughout. A 5m bar
+ *  almost never travels ±2% inside the measurement horizon, so the old
+ *  flat 2%/5% made every intraday trade a time-out and the intraday
+ *  stats meaningless. Scaled so target/stop distances match what each
+ *  timeframe actually moves. */
+const TF_RISK: Record<PatternChartTimeframe, { stop: number; target: number }> = {
+  M1: { stop: 0.2, target: 0.5 },
+  M5: { stop: 0.3, target: 0.75 },
+  M15: { stop: 0.5, target: 1.25 },
+  M30: { stop: 0.75, target: 1.9 },
+  H1: { stop: 1, target: 2.5 },
+  D1: { stop: 2, target: 5 },
+  Y1: { stop: 2, target: 5 },
+};
+
 export default function PowerAnalysisPanel({ symbol }: Props) {
   const [timeframe, setTimeframe] = useState<PatternChartTimeframe>("D1");
   // Target multiple of risk. 2R = highest win rate, 4R = ~4% returns.
@@ -78,6 +92,15 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
   const [useFixedRisk, setUseFixedRisk] = useState<boolean>(true);
   const [stopPct, setStopPct] = useState<number>(2);
   const [targetPct, setTargetPct] = useState<number>(5);
+  // Track whether the user typed their own risk numbers; until they do,
+  // switching timeframe applies the TF-appropriate defaults.
+  const riskTouchedRef = useRef(false);
+  useEffect(() => {
+    if (riskTouchedRef.current) return;
+    const r = TF_RISK[timeframe] ?? TF_RISK.D1;
+    setStopPct(r.stop);
+    setTargetPct(r.target);
+  }, [timeframe]);
   // Live mode — subscribe to WS candle events, bucket them into the
   // SELECTED timeframe, and re-run the analysis each time a bar of that
   // timeframe closes: 5m selected → a fresh verdict every 5 minutes,
@@ -100,6 +123,11 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
   const rerunQueuedRef = useRef(false);
   // One free automatic retry for a failed silent (auto) run per load.
   const autoRetriedRef = useRef(false);
+  // Reconciliation: locally-aggregated live buckets slowly drift from the
+  // authoritative OHLCV (missed ticks, reconnects). Every 12 bar closes
+  // the nonce bumps and the load effect refetches the real series.
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const barsSinceReloadRef = useRef(0);
   const token = useAuth((s) => s.token);
   // Candlestick patterns overlay — Hammer / Doji / Engulfing / Morning
   // Star / etc. Each detected pattern bar gets a marker labelled with
@@ -186,7 +214,30 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
         borderColor: "#1f2a3d",
         scaleMargins: { top: 0.12, bottom: 0.16 },
       },
-      timeScale: { borderColor: "#1f2a3d", timeVisible: true, secondsVisible: false },
+      // NSE times everywhere. lightweight-charts labels the axis and
+      // crosshair in UTC by default, which put the 09:15–15:30 IST session
+      // at "03:45–10:00" — every timestamp wrong by 5½ h for the trader.
+      localization: {
+        timeFormatter: (time: number) =>
+          new Date(time * 1000).toLocaleString("en-IN", {
+            timeZone: "Asia/Kolkata",
+            day: "2-digit", month: "short",
+            hour: "2-digit", minute: "2-digit", hour12: false,
+          }),
+      },
+      timeScale: {
+        borderColor: "#1f2a3d",
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: (time: number, tickMarkType: number) => {
+          const d = new Date(time * 1000);
+          // 0..2 = year/month/day ticks → date label; 3+ = intraday → IST time.
+          if (tickMarkType < 3) {
+            return d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" });
+          }
+          return d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false });
+        },
+      },
       crosshair: { mode: 1 },
       autoSize: true,
     });
@@ -353,7 +404,7 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
     })();
     return () => { aborted = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- effect intentionally re-runs only on the listed deps
-  }, [symbol, timeframe]);
+  }, [symbol, timeframe, reloadNonce]);
 
   // ── Indicator overlays ────────────────────────────────────────────────
   // Computes SMA-40 / SMA-18 / Bollinger(20, 2) from the loaded candles
@@ -448,8 +499,15 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
 
   /** Run the Power Analysis. */
   async function runPower(silent = false) {
-    if (candlesRef.current.length < 80) {
-      setError(`Need ≥ 80 bars (have ${candlesRef.current.length}).`);
+    // Analyse COMPLETED bars only. After a bar close the next bucket has
+    // already opened with one tick — including that 1-tick forming bar
+    // made the newest verdict a judgement on a bar that barely exists.
+    const all = candlesRef.current;
+    const tfMs = TF_MS[timeframe] ?? 60_000;
+    const last = all[all.length - 1];
+    const bars = last && Date.now() < last.t + tfMs ? all.slice(0, -1) : all;
+    if (bars.length < 80) {
+      setError(`Need ≥ 80 completed bars (have ${bars.length}).`);
       return;
     }
     // Never run two analyses concurrently — a late response would clobber
@@ -468,7 +526,7 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
     try {
       const res = await fetchPowerAnalysis({
         symbol,
-        candles: candlesRef.current,
+        candles: bars,
         useMl: true,   // ML head always on — it only votes out-of-sample
         targetR,
         stopPct: useFixedRisk ? stopPct : undefined,
@@ -567,6 +625,14 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
       } catch { /* time off-grid */ }
 
       if (newBarClosed) {
+        // Periodic reconciliation: refetch the authoritative OHLCV so the
+        // locally-built buckets can't drift forever.
+        barsSinceReloadRef.current += 1;
+        if (barsSinceReloadRef.current >= 12) {
+          barsSinceReloadRef.current = 0;
+          setReloadNonce((v) => v + 1);
+          return;   // the reload effect re-runs the analysis itself
+        }
         // One SILENT background rerun per completed bar. Small debounce so
         // a burst of catch-up candles (e.g. after a reconnect) collapses
         // into a single analysis pass.
@@ -609,6 +675,9 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
   const nextVerdictMs = lastBarT != null ? lastBarT + tfMsNow - nowTs : null;
   const countdown = (() => {
     if (nextVerdictMs == null) return null;
+    // More than 2 bars overdue = no ticks arriving (market closed or feed
+    // down) — say so instead of a stale "on next tick" all weekend.
+    if (nextVerdictMs <= -2 * tfMsNow) return "waiting for market data";
     if (nextVerdictMs <= 0) return "on next tick";
     const s = Math.floor(nextVerdictMs / 1000);
     const h = Math.floor(s / 3600);
@@ -674,7 +743,9 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
     type Tier = "live" | "muted" | "weak" | "losing";
     const tier: Tier = (() => {
       if (!accuracy) return "live";
-      if (accuracy.resolved_signals < 3) return "muted";   // tiny sample
+      // Below 6 resolved trades a win rate is statistical noise — neither
+      // an endorsement nor a condemnation. Style as "small sample".
+      if (accuracy.resolved_signals < 6) return "muted";
       if (accuracy.win_rate_pct < 45) return "losing";     // composer loses on this symbol
       if (accuracy.avg_per_trade_pct < 0) return "weak";   // 50/50 wins but losers bigger
       if (accuracy.win_rate_pct < 55) return "muted";      // coin flip
@@ -787,7 +858,7 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
             Power Analysis
           </h3>
           <span className="text-[10px] text-slate-500">
-            PPS + Strategy + Composite + ML (when trained)
+            PPS + Strategy + Composite + India setups · ML joins on live bars
           </span>
         </div>
 
@@ -842,7 +913,7 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
                 <input
                   type="number" min={0.1} max={20} step={0.1}
                   value={stopPct}
-                  onChange={(e) => setStopPct(Math.max(0.1, Math.min(20, Number(e.target.value) || 0.1)))}
+                  onChange={(e) => { riskTouchedRef.current = true; setStopPct(Math.max(0.1, Math.min(20, Number(e.target.value) || 0.1))); }}
                   className="w-12 bg-bg-bg/60 border border-bg-border rounded px-1.5 py-0.5 text-[11px] text-slate-100"
                 />%
               </label>
@@ -851,7 +922,7 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
                 <input
                   type="number" min={0.1} max={30} step={0.1}
                   value={targetPct}
-                  onChange={(e) => setTargetPct(Math.max(0.1, Math.min(30, Number(e.target.value) || 0.1)))}
+                  onChange={(e) => { riskTouchedRef.current = true; setTargetPct(Math.max(0.1, Math.min(30, Number(e.target.value) || 0.1))); }}
                   className="w-12 bg-bg-bg/60 border border-bg-border rounded px-1.5 py-0.5 text-[11px] text-slate-100"
                 />%
               </label>
@@ -962,7 +1033,9 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
           <span>{liveStatus || "live — waiting for next bar close"}</span>
           {countdown && (
             <span className="ml-auto text-emerald-200/90">
-              next {tfLabel} verdict in <span className="font-semibold">{countdown}</span>
+              {countdown === "waiting for market data"
+                ? <span className="font-semibold">waiting for market data</span>
+                : <>next {tfLabel} verdict in <span className="font-semibold">{countdown}</span></>}
             </span>
           )}
         </div>
@@ -982,7 +1055,7 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
             Markers are still drawn (so the user sees what the engine
             thought), but in muted / warning colours. The banner here
             explains *why* they aren't bright green/red. */}
-        {accuracy && accuracy.resolved_signals >= 3 &&
+        {accuracy && accuracy.resolved_signals >= 6 &&
          (accuracy.win_rate_pct < 55 || accuracy.avg_per_trade_pct < 0) && (
           <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
             <div className={clsx(
@@ -1051,6 +1124,10 @@ export default function PowerAnalysisPanel({ symbol }: Props) {
 
       {/* Per-bar verdict timeline — the visible live heartbeat. */}
       <SignalTimeline signals={signals} tfLabel={tfLabel} />
+
+      {/* Signal log — every actionable signal with its RESOLVED outcome.
+          The first thing a pro checks: what did past signals actually do. */}
+      <SignalLog signals={signals} tfLabel={tfLabel} />
 
       {/* Summary + latest-signal strip */}
       <div className="px-4 py-3 border-t border-bg-border grid grid-cols-2 md:grid-cols-6 gap-3">
@@ -1182,6 +1259,74 @@ function SignalTimeline({ signals, tfLabel }: { signals: PowerSignal[]; tfLabel:
   );
 }
 
+/** Every actionable signal with its resolved outcome — newest first.
+ *  Outcomes come from the same walk-forward measurement as the banner
+ *  (next-open fills, gap slippage, net of costs), so what this table says
+ *  a signal did is what a real bracket order would have done. */
+function SignalLog({ signals, tfLabel }: { signals: PowerSignal[]; tfLabel: string }) {
+  const rows = signals.filter((s) => s.signal === "BUY" || s.signal === "SELL").slice(-20).reverse();
+  if (rows.length === 0) return null;
+  const OUTCOME_STYLE: Record<string, { label: string; cls: string }> = {
+    win:     { label: "WIN",     cls: "bg-accent-buy/15 text-accent-buy" },
+    loss:    { label: "LOSS",    cls: "bg-accent-sell/15 text-accent-sell" },
+    skip:    { label: "NO FILL", cls: "bg-slate-600/30 text-slate-400" },
+    pending: { label: "OPEN",    cls: "bg-amber-500/15 text-amber-300" },
+  };
+  return (
+    <div className="px-4 py-2 border-t border-bg-border">
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5">
+        Signal log ({tfLabel}) · newest first · outcomes are net of costs with next-open fills
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[11px] font-mono">
+          <thead className="text-[9px] uppercase tracking-wider text-slate-500">
+            <tr>
+              <th className="text-left py-1 pr-2">When</th>
+              <th className="text-left py-1 pr-2">Side</th>
+              <th className="text-left py-1 pr-2">Setup</th>
+              <th className="text-right py-1 pr-2">Entry</th>
+              <th className="text-right py-1 pr-2">Stop</th>
+              <th className="text-right py-1 pr-2">Target</th>
+              <th className="text-center py-1 pr-2">Result</th>
+              <th className="text-right py-1">Net %</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-bg-border/50">
+            {rows.map((s) => {
+              const buy = s.signal === "BUY";
+              const o = OUTCOME_STYLE[s.outcome ?? "pending"] ?? OUTCOME_STYLE.pending;
+              const net = s.net_return_pct;
+              return (
+                <tr key={s.t}>
+                  <td className="py-1 pr-2 text-slate-400">
+                    {tfLabel === "1d"
+                      ? new Date(s.t).toLocaleDateString([], { day: "2-digit", month: "short" })
+                      : new Date(s.t).toLocaleString([], { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  </td>
+                  <td className={clsx("py-1 pr-2 font-bold", buy ? "text-accent-buy" : "text-accent-sell")}>
+                    {buy ? "▲ BUY" : "▼ SELL"}
+                  </td>
+                  <td className="py-1 pr-2 text-slate-300">{s.pattern ? prettyPattern(s.pattern) : "—"}</td>
+                  <td className="py-1 pr-2 text-right text-slate-200">{s.entry_price?.toFixed(2) ?? "—"}</td>
+                  <td className="py-1 pr-2 text-right text-accent-sell/80">{s.stop_loss?.toFixed(2) ?? "—"}</td>
+                  <td className="py-1 pr-2 text-right text-accent-buy/80">{s.target_price?.toFixed(2) ?? "—"}</td>
+                  <td className="py-1 pr-2 text-center">
+                    <span className={clsx("px-1.5 py-0.5 rounded text-[9px] font-bold", o.cls)}>{o.label}</span>
+                  </td>
+                  <td className={clsx("py-1 text-right tabular-nums",
+                    net == null ? "text-slate-500" : net > 0 ? "text-accent-buy" : "text-accent-sell")}>
+                    {net == null ? "—" : `${net > 0 ? "+" : ""}${net.toFixed(2)}%`}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 /** Humanise a pattern key for display on a chart marker / price-line label.
  *  Examples: "ascending_triangle" → "Asc Triangle", "bull_flag" → "Bull Flag".
  *  Long names get abbreviated so they fit on a 200-px marker.
@@ -1213,6 +1358,14 @@ function prettyPattern(p: string): string {
     horizontal_channel:        "H-Channel",
     bullish_island_reversal:   "Bull Island",
     bearish_island_reversal:   "Bear Island",
+    orb_breakout:              "ORB Break ↑",
+    orb_breakdown:             "ORB Break ↓",
+    pdh_breakout:              "PDH Break",
+    pdl_breakdown:             "PDL Break",
+    vwap_reclaim:              "VWAP Reclaim",
+    vwap_reject:               "VWAP Reject",
+    supertrend_flip_bull:      "Supertrend ↑",
+    supertrend_flip_bear:      "Supertrend ↓",
   };
   return map[p] ?? p.split("_").map((s) => s[0].toUpperCase() + s.slice(1)).join(" ");
 }
@@ -1535,7 +1688,7 @@ function AccuracyBanner({
   const resolved = accuracy.resolved_signals;
 
   const tier =
-    resolved < 3 ? "tiny" :
+    resolved < 6 ? "tiny" :   // below 6 resolved trades any rate is noise
     wr >= 70 ? "strong" :
     wr >= 55 ? "real" :
     wr >= 45 ? "coinflip" :
@@ -1580,7 +1733,7 @@ function AccuracyBanner({
 
       {/* Hard honest footer */}
       <div className="mt-2 pt-2 border-t border-bg-border/50 text-[10px] text-slate-500 leading-relaxed">
-        {resolved < 3 ? (
+        {resolved < 6 ? (
           <>Sample too small to draw any conclusion. Run on a different timeframe or symbol with more history.</>
         ) : tier === "negative" ? (
           <>This is a measured loss, not noise. Do NOT trade the BUY/SELL arrows on this chart. Switch to a symbol with positive measured edge.</>

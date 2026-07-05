@@ -28,12 +28,20 @@ DEFAULT_TARGET_R: float = 2.0
 
 Signal = Literal["BUY", "SELL", "HOLD"]
 PatternId = Literal[
-    "symmetrical_triangle",
     "ascending_triangle",
     "descending_triangle",
     "head_shoulders_continuation",
     "double_bottom",
     "double_top",
+    # India-intraday setups + Supertrend (replaced symmetrical_triangle).
+    "orb_breakout",
+    "orb_breakdown",
+    "pdh_breakout",
+    "pdl_breakdown",
+    "vwap_reclaim",
+    "vwap_reject",
+    "supertrend_flip_bull",
+    "supertrend_flip_bear",
 ]
 
 # Canonical display names so PPS pattern ids line up with the
@@ -41,12 +49,19 @@ PatternId = Literal[
 # enough resolved samples in the store, its MEASURED win rate flows onto
 # live PPS signals via enrich_signals_with_accuracy().
 PPS_PATTERN_NAMES: Dict[str, str] = {
-    "symmetrical_triangle": "Symmetrical Triangle",
     "ascending_triangle": "Ascending Triangle",
     "descending_triangle": "Descending Triangle",
     "head_shoulders_continuation": "Head and Shoulders",
     "double_bottom": "Double Bottom",
     "double_top": "Double Top",
+    "orb_breakout": "Opening Range Breakout",
+    "orb_breakdown": "Opening Range Breakdown",
+    "pdh_breakout": "Prev-Day High Breakout",
+    "pdl_breakdown": "Prev-Day Low Breakdown",
+    "vwap_reclaim": "VWAP Reclaim",
+    "vwap_reject": "VWAP Rejection",
+    "supertrend_flip_bull": "Supertrend Bull Flip",
+    "supertrend_flip_bear": "Supertrend Bear Flip",
 }
 
 # Empirical-Bayes shrinkage constant: at this many measured samples the
@@ -434,6 +449,217 @@ def _confidence(
 
 # ─── main engine ────────────────────────────────────────────────────────
 
+# ─── India-intraday setups (ORB / PDH-PDL / VWAP) + Supertrend ────────────
+#
+# These are the bread-and-butter NSE strategies — Opening Range Breakout,
+# Previous-Day High/Low breakout, session-VWAP reclaim/reject, and the
+# Supertrend(10, 3) flip. They replace the symmetrical-triangle detector,
+# whose loose geometry (any 2 converging pivots) fired on almost every
+# intraday chart and drowned every other setup.
+#
+# All are computed as O(n) precomputed series; the per-bar check is a pure
+# cross condition (fires exactly once per cross, no spam). Session logic
+# uses IST (UTC+5:30) dates from the bar timestamps; when timestamps are
+# missing the intraday setups simply don't run.
+
+_IST_OFFSET_MS = int(5.5 * 3600 * 1000)
+# NSE cash session: 09:15–15:30 IST, in minutes-of-day.
+_NSE_OPEN_MIN = 9 * 60 + 15
+_NSE_CLOSE_MIN = 15 * 60 + 30
+
+
+def _session_ids(ts: List[Optional[int]]) -> Optional[List[int]]:
+    """Map each bar to a session index; -1 for bars OUTSIDE NSE hours.
+
+    Sessions are NSE trading sessions (09:15–15:30 IST per calendar day),
+    not calendar days — otherwise pre-market data or a dev feed that ticks
+    around the clock builds "opening ranges" out of midnight bars and
+    poisons PDH/PDL/VWAP. Out-of-hours bars get -1 and contribute nothing.
+    """
+    if not ts or any(t is None for t in ts):
+        return None
+    out: List[int] = []
+    last_day = None
+    sid = -1
+    for t in ts:
+        ist = int(t) + _IST_OFFSET_MS
+        mins = (ist // 60_000) % 1440
+        if not (_NSE_OPEN_MIN <= mins <= _NSE_CLOSE_MIN):
+            out.append(-1)
+            continue
+        day = ist // 86_400_000
+        if day != last_day:
+            sid += 1
+            last_day = day
+        out.append(sid)
+    return out
+
+
+def _session_series(
+    sessions: List[int],
+    highs: List[float],
+    lows: List[float],
+    closes: List[float],
+    volumes: List[float],
+    or_bars: int = 3,
+) -> Tuple[List[Optional[float]], List[Optional[float]], List[Optional[float]],
+           List[Optional[float]], List[Optional[float]]]:
+    """Per-bar (or_high, or_low, pdh, pdl, vwap), all backward-looking.
+
+    or_high/or_low are None while the opening range is still forming and
+    for the session's first `or_bars` bars; pdh/pdl are None in the first
+    session (no previous day yet).
+    """
+    n = len(sessions)
+    or_high: List[Optional[float]] = [None] * n
+    or_low: List[Optional[float]] = [None] * n
+    pdh: List[Optional[float]] = [None] * n
+    pdl: List[Optional[float]] = [None] * n
+    vwap: List[Optional[float]] = [None] * n
+
+    cur_sid: Optional[int] = None
+    prev_hi: Optional[float] = None
+    prev_lo: Optional[float] = None
+    run_hi = run_lo = None
+    or_h_acc = or_l_acc = None
+    bars_in = 0
+    cum_pv = cum_v = 0.0
+    for i in range(n):
+        s = sessions[i]
+        if s < 0:
+            continue   # out-of-hours bar: no features, contributes nothing
+        if s != cur_sid:
+            prev_hi, prev_lo = run_hi, run_lo   # finalise the prior session
+            cur_sid = s
+            run_hi = run_lo = None
+            or_h_acc = or_l_acc = None
+            bars_in = 0
+            cum_pv = cum_v = 0.0
+        bars_in += 1
+        run_hi = highs[i] if run_hi is None else max(run_hi, highs[i])
+        run_lo = lows[i] if run_lo is None else min(run_lo, lows[i])
+        tp = (highs[i] + lows[i] + closes[i]) / 3.0
+        v = max(volumes[i], 0.0)
+        cum_pv += tp * v
+        cum_v += v
+        vwap[i] = cum_pv / cum_v if cum_v > 0 else None
+        pdh[i], pdl[i] = prev_hi, prev_lo
+        if bars_in <= or_bars:
+            or_h_acc = highs[i] if or_h_acc is None else max(or_h_acc, highs[i])
+            or_l_acc = lows[i] if or_l_acc is None else min(or_l_acc, lows[i])
+        else:
+            or_high[i] = or_h_acc
+            or_low[i] = or_l_acc
+    return or_high, or_low, pdh, pdl, vwap
+
+
+def _supertrend_dirs(
+    highs: List[float], lows: List[float], closes: List[float],
+    period: int = 10, mult: float = 3.0,
+) -> Tuple[List[int], List[Optional[float]]]:
+    """Standard Supertrend(10, 3): per-bar direction (+1 bull / -1 bear / 0
+    warmup) and the trailing line (the stop for a flip trade)."""
+    n = len(closes)
+    atr = _atr_series(highs, lows, closes, period)
+    direction = [0] * n
+    line: List[Optional[float]] = [None] * n
+    fub = flb = None   # final upper / lower bands (canonical carry rules)
+    d = 0
+    for i in range(n):
+        a = atr[i]
+        if a is None:
+            continue
+        hl2 = (highs[i] + lows[i]) / 2.0
+        bub = hl2 + mult * a   # basic bands
+        blb = hl2 - mult * a
+        prev_close = closes[i - 1] if i > 0 else closes[i]
+        # Canonical band carry: the upper band may only move DOWN unless
+        # the prior close broke above it; the lower band only UP unless
+        # the prior close broke below it.
+        fub = bub if fub is None or bub < fub or prev_close > fub else fub
+        flb = blb if flb is None or blb > flb or prev_close < flb else flb
+        if d == 0:
+            d = 1 if closes[i] >= hl2 else -1
+        elif d == 1 and closes[i] < flb:
+            d = -1
+        elif d == -1 and closes[i] > fub:
+            d = 1
+        direction[i] = d
+        line[i] = flb if d == 1 else fub
+    return direction, line
+
+
+def _india_setup_candidates(
+    i: int,
+    closes: List[float],
+    atr_now: float,
+    long_ok: bool,
+    short_ok: bool,
+    sessions: Optional[List[int]],
+    or_high: Optional[List[Optional[float]]],
+    or_low: Optional[List[Optional[float]]],
+    pdh: Optional[List[Optional[float]]],
+    pdl: Optional[List[Optional[float]]],
+    vwap: Optional[List[Optional[float]]],
+    st_dir: List[int],
+    st_line: List[Optional[float]],
+) -> List[dict]:
+    """Cross-triggered candidates at bar i. Each fires only on the bar the
+    level is first crossed, and only with the trend filter aligned."""
+    out: List[dict] = []
+    if i < 1:
+        return out
+    c, p = closes[i], closes[i - 1]
+
+    def _cand(pattern: str, direction: str, stop: float, formation: int) -> Optional[dict]:
+        if direction == "BUY" and not stop < c:
+            return None
+        if direction == "SELL" and not stop > c:
+            return None
+        risk = abs(c - stop)
+        target = c + DEFAULT_TARGET_R * risk if direction == "BUY" else c - DEFAULT_TARGET_R * risk
+        return {"pattern": pattern, "direction": direction, "entry": c,
+                "stop": stop, "target": target, "formation_bars": formation}
+
+    same_sess = sessions is not None and sessions[i] >= 0 and sessions[i] == sessions[i - 1]
+    if same_sess:
+        # Opening Range Breakout — first cross of the opening range.
+        if or_high and or_high[i] is not None and or_high[i - 1] is not None:
+            if long_ok and c > or_high[i] and p <= or_high[i - 1]:
+                cand = _cand("orb_breakout", "BUY", float(or_low[i] if or_low[i] is not None else c - 1.5 * atr_now), 3)
+                if cand: out.append(cand)
+            if short_ok and or_low[i] is not None and or_low[i - 1] is not None and c < or_low[i] and p >= or_low[i - 1]:
+                cand = _cand("orb_breakdown", "SELL", float(or_high[i]), 3)
+                if cand: out.append(cand)
+        # Previous-Day High/Low breakout.
+        if pdh and pdh[i] is not None and pdh[i - 1] is not None:
+            if long_ok and c > pdh[i] and p <= pdh[i - 1]:
+                cand = _cand("pdh_breakout", "BUY", float(pdh[i]) - 1.0 * atr_now, 5)
+                if cand: out.append(cand)
+        if pdl and pdl[i] is not None and pdl[i - 1] is not None:
+            if short_ok and c < pdl[i] and p >= pdl[i - 1]:
+                cand = _cand("pdl_breakdown", "SELL", float(pdl[i]) + 1.0 * atr_now, 5)
+                if cand: out.append(cand)
+        # Session-VWAP reclaim / rejection.
+        if vwap and vwap[i] is not None and vwap[i - 1] is not None:
+            if long_ok and c > vwap[i] and p <= vwap[i - 1]:
+                cand = _cand("vwap_reclaim", "BUY", float(vwap[i]) - 1.0 * atr_now, 4)
+                if cand: out.append(cand)
+            if short_ok and c < vwap[i] and p >= vwap[i - 1]:
+                cand = _cand("vwap_reject", "SELL", float(vwap[i]) + 1.0 * atr_now, 4)
+                if cand: out.append(cand)
+
+    # Supertrend(10, 3) flip — works on every timeframe (daily included).
+    if st_dir[i] != 0 and st_dir[i - 1] != 0 and st_line[i] is not None:
+        if long_ok and st_dir[i] > 0 and st_dir[i - 1] < 0:
+            cand = _cand("supertrend_flip_bull", "BUY", float(st_line[i]), 10)
+            if cand: out.append(cand)
+        if short_ok and st_dir[i] < 0 and st_dir[i - 1] > 0:
+            cand = _cand("supertrend_flip_bear", "SELL", float(st_line[i]), 10)
+            if cand: out.append(cand)
+    return out
+
+
 def generate_pps_signals(
     bars: List[dict],
     *,
@@ -473,6 +699,28 @@ def generate_pps_signals(
     sma18 = _sma_series(closes, 18)
     atrs = _atr_series(highs, lows, closes, 14)
 
+    # India-setup precomputes (all O(n), all backward-looking). Session
+    # features need bar timestamps; without them only Supertrend runs.
+    ts = [b.get("t") for b in bars]
+    sessions = _session_ids(ts)
+    # Intraday = several bars per NSE session. Daily bars (1 bar/session)
+    # must NOT get session features — a 1-bar "VWAP" is just that bar's
+    # typical price and crossing it is noise.
+    in_sess = [s for s in (sessions or []) if s >= 0]
+    intraday = bool(in_sess) and len(in_sess) / (max(in_sess) + 1) >= 5
+    if intraday:
+        # Opening range = the first 15 REAL minutes of the session on any
+        # timeframe (15 bars on 1m, 3 on 5m, 1 on 15m+), not "3 bars".
+        diffs = sorted(int(ts[j]) - int(ts[j - 1]) for j in range(1, len(ts)))
+        interval_ms = diffs[len(diffs) // 2] if diffs else 300_000
+        or_bars = max(1, min(15, round(15 * 60_000 / max(interval_ms, 1))))
+        or_high, or_low, pdh, pdl, vwap = _session_series(
+            sessions, highs, lows, closes, volumes, or_bars=or_bars)
+    else:
+        or_high = or_low = pdh = pdl = vwap = None
+        sessions = None
+    st_dir, st_line = _supertrend_dirs(highs, lows, closes)
+
     signals: List[PpsSignal] = []
 
     for i in range(n):
@@ -510,12 +758,15 @@ def generate_pps_signals(
         pv_h, pv_l = _pivots_up_to(highs, lows, i, k=3, lookback=60)
 
         candidates: List[dict] = []
-        # Triangles + double patterns are bi-directional; only emit the
-        # direction that matches the trend filter.
-        sym = _detect_symmetrical_triangle(pv_h, pv_l, i, close, atr_now)
-        if sym is not None:
-            if (sym["direction"] == "BUY" and long_ok) or (sym["direction"] == "SELL" and short_ok):
-                candidates.append(sym)
+        # NOTE: the symmetrical-triangle detector was deliberately REMOVED
+        # from the candidate list — any 2 converging pivots matched it, so
+        # it fired on nearly every intraday chart and drowned all other
+        # setups ("Sym Triangle" on every arrow). The India setups below
+        # (ORB / PDH-PDL / VWAP / Supertrend) replace it.
+        candidates.extend(_india_setup_candidates(
+            i, closes, atr_now, long_ok, short_ok,
+            sessions, or_high, or_low, pdh, pdl, vwap, st_dir, st_line,
+        ))
         if long_ok:
             asc = _detect_ascending_triangle(pv_h, pv_l, i, close, atr_now)
             if asc is not None:
