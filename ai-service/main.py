@@ -760,6 +760,9 @@ try:
 
     class PpsBar(BaseModel):
         date: str
+        # Epoch-ms timestamp. Optional for backward compatibility; when
+        # present it enables the intraday session setups (ORB/PDH/VWAP).
+        t: Optional[int] = None
         open: float
         high: float
         low: float
