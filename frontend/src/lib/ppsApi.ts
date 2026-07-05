@@ -9,15 +9,27 @@ import { api } from "./api";
 export type PpsAction = "BUY" | "SELL" | "HOLD";
 
 export type PpsPatternId =
-  | "symmetrical_triangle"
   | "ascending_triangle"
   | "descending_triangle"
   | "head_shoulders_continuation"
   | "double_bottom"
-  | "double_top";
+  | "double_top"
+  // India intraday setups + Supertrend (replaced symmetrical_triangle).
+  | "orb_breakout"
+  | "orb_breakdown"
+  | "pdh_breakout"
+  | "pdl_breakdown"
+  | "vwap_reclaim"
+  | "vwap_reject"
+  | "supertrend_flip_bull"
+  | "supertrend_flip_bear";
 
 export interface PpsBar {
   date: string;
+  /** Epoch-ms timestamp. Required for the engine's intraday session
+   *  setups (ORB / PDH-PDL / VWAP) and for accurate intraday marker
+   *  placement; the `date` string alone collides within a session. */
+  t?: number;
   open: number;
   high: number;
   low: number;
@@ -59,22 +71,36 @@ export interface PpsSignalsResponse {
 
 /** Short tag rendered above/below the candle. */
 export const PATTERN_SHORT: Record<PpsPatternId, string> = {
-  symmetrical_triangle: "SYM▲",
   ascending_triangle: "ASC▲",
   descending_triangle: "DSC▲",
   head_shoulders_continuation: "H&S",
   double_bottom: "2Bot",
   double_top: "2Top",
+  orb_breakout: "ORB↑",
+  orb_breakdown: "ORB↓",
+  pdh_breakout: "PDH",
+  pdl_breakdown: "PDL",
+  vwap_reclaim: "VWAP↑",
+  vwap_reject: "VWAP↓",
+  supertrend_flip_bull: "ST↑",
+  supertrend_flip_bear: "ST↓",
 };
 
 /** Human-readable label for tables / panels. */
 export const PATTERN_LABEL: Record<PpsPatternId, string> = {
-  symmetrical_triangle: "Symmetrical Triangle",
   ascending_triangle: "Ascending Triangle",
   descending_triangle: "Descending Triangle",
   head_shoulders_continuation: "Head & Shoulders (continuation)",
   double_bottom: "Double Bottom",
   double_top: "Double Top",
+  orb_breakout: "Opening Range Breakout",
+  orb_breakdown: "Opening Range Breakdown",
+  pdh_breakout: "Prev-Day High Breakout",
+  pdl_breakdown: "Prev-Day Low Breakdown",
+  vwap_reclaim: "VWAP Reclaim",
+  vwap_reject: "VWAP Rejection",
+  supertrend_flip_bull: "Supertrend Bull Flip",
+  supertrend_flip_bear: "Supertrend Bear Flip",
 };
 
 /**

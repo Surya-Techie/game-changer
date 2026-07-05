@@ -157,6 +157,8 @@ export async function getPrediction(symbol: string, candles: Candle[], horizon =
 
 export interface PpsBarIn {
   date: string;
+  /** Epoch-ms timestamp — enables the engine's intraday session setups. */
+  t?: number;
   open: number;
   high: number;
   low: number;

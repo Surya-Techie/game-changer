@@ -7,7 +7,7 @@ import type { PpsPatternId } from "../lib/ppsApi";
  * the state and re-derives the filtered signal list from `useMemo`.
  */
 
-export type PatternGroup = "all" | "triangles" | "hns" | "doubles";
+export type PatternGroup = "all" | "intraday" | "triangles" | "hns" | "doubles";
 export type DirectionFilter = "all" | "BUY" | "SELL";
 
 export interface PpsFilters {
@@ -25,9 +25,16 @@ interface Props {
 
 const GROUPS: Array<{ id: PatternGroup; label: string }> = [
   { id: "all", label: "All" },
+  { id: "intraday", label: "Intraday" },
   { id: "triangles", label: "Triangles" },
   { id: "hns", label: "H&S" },
   { id: "doubles", label: "Double" },
+];
+
+/** India intraday setups + Supertrend. */
+const INTRADAY_IDS: PpsPatternId[] = [
+  "orb_breakout", "orb_breakdown", "pdh_breakout", "pdl_breakdown",
+  "vwap_reclaim", "vwap_reject", "supertrend_flip_bull", "supertrend_flip_bear",
 ];
 
 const DIRS: Array<{ id: DirectionFilter; label: string }> = [
@@ -42,8 +49,10 @@ const DIRS: Array<{ id: DirectionFilter; label: string }> = [
  */
 export function patternsInGroup(group: PatternGroup): Set<PpsPatternId> {
   switch (group) {
+    case "intraday":
+      return new Set<PpsPatternId>(INTRADAY_IDS);
     case "triangles":
-      return new Set<PpsPatternId>(["symmetrical_triangle", "ascending_triangle", "descending_triangle"]);
+      return new Set<PpsPatternId>(["ascending_triangle", "descending_triangle"]);
     case "hns":
       return new Set<PpsPatternId>(["head_shoulders_continuation"]);
     case "doubles":
@@ -51,12 +60,12 @@ export function patternsInGroup(group: PatternGroup): Set<PpsPatternId> {
     case "all":
     default:
       return new Set<PpsPatternId>([
-        "symmetrical_triangle",
         "ascending_triangle",
         "descending_triangle",
         "head_shoulders_continuation",
         "double_bottom",
         "double_top",
+        ...INTRADAY_IDS,
       ]);
   }
 }
